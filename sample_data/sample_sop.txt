@@ -1,0 +1,38 @@
+MERIDIAN LOGISTICS — STANDARD OPERATING PROCEDURES (Finance)
+Effective: January 2026
+
+STEP 1
+Trigger: Monthly bookkeeping close
+Action: Pay Ledgible bookkeeping subscription
+Condition: Amount is $89/month, auto-pay if under $500
+Role: Operations Manager
+
+STEP 2
+Trigger: New vendor invoice received
+Action: Verify all vendor invoices against purchase orders
+Condition: If amount > 5000, route to COO for approval before payment
+Role: Accounts Payable Clerk
+
+STEP 3
+Trigger: Quarterly safety audit
+Action: Pay SafeCert Auditing for facility safety certification
+Condition: Amount is $1,200 per quarter, net-30 terms
+Role: Compliance Lead
+
+STEP 4
+Trigger: Monthly telecom billing cycle
+Action: Pay Twilio API usage invoice
+Condition: Amount is approximately $120/month, auto-pay enabled
+Role: Tech Lead
+
+STEP 5
+Trigger: Bi-weekly contractor payroll run
+Action: Pay Northbridge Staffing for contracted drivers
+Condition: Amount varies by headcount, approximately $4,200 bi-weekly
+Role: Operations Manager
+
+STEP 6
+Trigger: Monthly fuel card reconciliation
+Action: Pay RouteFuel fleet fuel card balance
+Condition: Amount is approximately $800/month, due on the 10th
+Role: Fleet Coordinator

@@ -1,0 +1,6 @@
+pandas>=2.0
+pdfplumber>=0.10
+langgraph>=0.2      # Phase 2: agent workflow generator
+streamlit>=1.30     # Phase 3: web UI
+# Optional: enables LLM extraction for free-prose SOPs
+# anthropic>=0.40

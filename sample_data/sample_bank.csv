@@ -1,0 +1,43 @@
+Date,Description,Amount,Memo
+2026-01-01,Ledgible Inc.,89.00,Bookkeeping subscription
+2026-02-01,Ledgible Inc.,89.00,Bookkeeping subscription
+2026-03-01,Ledgible Inc.,89.00,Bookkeeping subscription
+2026-04-01,Ledgible Inc.,89.00,Bookkeeping subscription
+2026-05-01,Ledgible Inc.,89.00,Bookkeeping subscription
+2026-06-01,Ledgible Inc.,89.00,Bookkeeping subscription
+2026-01-15,Twilio,122.03,API usage
+2026-02-15,Twilio,115.28,API usage
+2026-03-15,Twilio,118.03,API usage
+2026-04-15,Twilio,117.46,API usage
+2026-05-15,Twilio,123.10,API usage
+2026-06-15,Twilio,122.44,API usage
+2026-01-09,Northbridge Staffing LLC,4265.98,Contractor payroll
+2026-01-23,Northbridge Staffing LLC,4161.30,Contractor payroll
+2026-02-06,Northbridge Staffing LLC,4204.85,Contractor payroll
+2026-02-20,Northbridge Staffing LLC,4153.87,Contractor payroll
+2026-03-06,Northbridge Staffing LLC,4178.42,Contractor payroll
+2026-03-20,Northbridge Staffing LLC,4215.70,Contractor payroll
+2026-04-03,Northbridge Staffing LLC,4153.45,Contractor payroll
+2026-04-17,Northbridge Staffing LLC,4175.85,Contractor payroll
+2026-05-01,Northbridge Staffing LLC,4234.48,Contractor payroll
+2026-05-15,Northbridge Staffing LLC,4220.84,Contractor payroll
+2026-05-29,Northbridge Staffing LLC,4178.66,Contractor payroll
+2026-06-12,Northbridge Staffing LLC,4226.60,Contractor payroll
+2026-06-26,Northbridge Staffing LLC,4255.23,Contractor payroll
+2026-01-03,Adobe Creative,64.99,Design software
+2026-02-03,Adobe Creative,64.99,Design software
+2026-03-03,Adobe Creative,64.99,Design software
+2026-04-03,Adobe Creative,64.99,Design software
+2026-05-03,Adobe Creative,64.99,Design software
+2026-06-03,Adobe Creative,64.99,Design software
+2026-01-20,DataHaven Backup,149.00,Cloud backup
+2026-02-20,DataHaven Backup,149.00,Cloud backup
+2026-03-20,DataHaven Backup,149.00,Cloud backup
+2026-04-20,DataHaven Backup,149.00,Cloud backup
+2026-05-20,DataHaven Backup,149.00,Cloud backup
+2026-06-20,DataHaven Backup,149.00,Cloud backup
+2026-01-12,RouteFuel,770.42,Fleet fuel card
+2026-03-01,RouteFuel,822.38,Fleet fuel card
+2026-04-18,RouteFuel,815.38,Fleet fuel card
+2026-06-05,RouteFuel,792.12,Fleet fuel card
+2026-03-14,Acme Industrial Supply,6800.00,Invoice #4471 - warehouse racking

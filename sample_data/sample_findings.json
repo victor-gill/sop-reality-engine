@@ -1,0 +1,63 @@
+{
+  "unmapped_leakage": [
+    {
+      "type": "unmapped_leakage",
+      "vendor": "datahaven backup",
+      "vendor_display": "DataHaven Backup",
+      "cadence": "monthly",
+      "transactions": 6,
+      "monthly_cost": 144.19,
+      "annualized": 1730.32,
+      "category": "Software/SaaS",
+      "detail": "Recurring monthly spend with 'DataHaven Backup' has no matching SOP step \u2014 undocumented outflow."
+    },
+    {
+      "type": "unmapped_leakage",
+      "vendor": "adobe creative",
+      "vendor_display": "Adobe Creative",
+      "cadence": "monthly",
+      "transactions": 6,
+      "monthly_cost": 62.89,
+      "annualized": 754.72,
+      "category": "Software/SaaS",
+      "detail": "Recurring monthly spend with 'Adobe Creative' has no matching SOP step \u2014 undocumented outflow."
+    }
+  ],
+  "sop_deviations": [
+    {
+      "type": "sop_deviation",
+      "step_id": "STEP_03",
+      "vendor": "Pay SafeCert Auditing for facility safety certification",
+      "expected_amount": 1200.0,
+      "detail": "STEP_03: 'Pay SafeCert Auditing for facility safety certification' expects ~$1,200 but no matching transactions found \u2014 documented process with no execution."
+    }
+  ],
+  "threshold_reviews": [
+    {
+      "type": "threshold_review",
+      "step_id": "STEP_02",
+      "vendor": "Acme Industrial Supply",
+      "amount": 6800.0,
+      "threshold": 5000.0,
+      "date": "2026-03-14",
+      "detail": "$6,800 to 'Acme Industrial Supply' on 2026-03-14 exceeds the $5,000 approval threshold in STEP_02 \u2014 verify approval is on file."
+    }
+  ],
+  "cycle_gaps": [
+    {
+      "type": "cycle_gap",
+      "step_id": "STEP_06",
+      "vendor": "routefuel",
+      "expected_every_days": 30,
+      "actual_every_days": 48.0,
+      "detail": "STEP_06: expected every ~30 days, actually every ~48 days \u2014 execution is drifting from the documented cadence."
+    }
+  ],
+  "summary": {
+    "steps_parsed": 6,
+    "events_analyzed": 42,
+    "vendors_seen": 7,
+    "monthly_leakage": 207.08,
+    "annualized_leakage": 2485.04
+  }
+}
