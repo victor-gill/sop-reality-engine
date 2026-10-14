@@ -4,3 +4,4 @@ langgraph>=0.2      # Phase 2: agent workflow generator
 streamlit>=1.30     # Phase 3: web UI
 # Optional: enables LLM extraction for free-prose SOPs
 # anthropic>=0.40
+pyyaml>=6.0      # business_config.yaml — the customizable layer

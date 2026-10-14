@@ -27,6 +27,13 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 # Phase 3: web UI
 .venv/bin/streamlit run app.py
+
+# Phase 6: the product loop — schedule this (e.g. cron: 0 8 * * 1)
+.venv/bin/python runner.py --sop sample_data/sample_sop.txt \
+    --bank sample_data/sample_bank.csv \
+    --payroll sample_data/sample_payroll.csv \
+    --pnl sample_data/sample_pnl.csv \
+    --logistics sample_data/sample_logistics.csv
 ```
 
 ## What it finds
@@ -95,3 +102,16 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
   `--logistics` (shipments as another dataset, same event shape). New
   findings route into the Task Queue (P1 → Payroll Lead, variance →
   Controller).
+- **Phase 6** ✅ — the product loop. `runner.py` runs the whole system on
+  a schedule (cron): audit → tasks → agent workflow → owner digest. The
+  generated workflow's human-in-the-loop checkpoint now writes an
+  approval request to `state/approvals/pending/` instead of a terminal
+  prompt — the owner approves/rejects from the app's Approvals tab and
+  `resolve_approval` completes the workflow. The app shows the
+  Tuesday-morning digest banner.
+- **Customizable** ✅ — `business_config.yaml` is the single source of
+  truth: approval threshold (global + per-category overrides), auto-pay
+  vendors, always-review vendors, team roles, digest cadence. The
+  workflow reads it at runtime — change a value, the next run follows
+  it, no regeneration. The app's Settings tab edits it with no code.
+  Point `$SOPRE_CONFIG` at a different file for a different business.

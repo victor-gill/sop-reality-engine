@@ -1,0 +1,45 @@
+# SOP Reality Engine — business configuration.
+# This is the customizable layer: edit values here (or in the app's
+# Settings tab) and the audit engine, task router, and agent workflow
+# all follow the new rules on the next run. No code changes needed.
+
+business_name: "Meridian Logistics (demo)"
+
+# --- Money guardrails -------------------------------------------------------
+# Global approval threshold: anything above this needs a human.
+approval_threshold: 5000
+
+# Per-category overrides (optional). A category threshold replaces the
+# global one for matching transactions.
+category_thresholds:
+  Payroll: 10000
+  Logistics: 2000
+
+# Vendors that may auto-pay under the threshold without review.
+auto_pay_vendors:
+  - "Ledgible Inc."
+  - "Twilio"
+  - "Adobe Creative"
+  - "DataHaven Backup"
+
+# Vendors that always need a human, regardless of amount.
+always_review_vendors:
+  - "Acme Industrial Supply"
+
+# --- Team -------------------------------------------------------------------
+# Role -> the person who owns it. Tasks route to roles; the app shows
+# names. Leave a name empty to keep the generic role label.
+roles:
+  Operator: ""
+  Compliance Lead: ""
+  Fleet Coordinator: ""
+  Tech Lead: ""
+  Accounts Payable Clerk: ""
+  Payroll Lead: ""
+  Controller: ""
+
+# --- Digest -----------------------------------------------------------------
+# The Tuesday-morning brief. 'weekly' or 'daily'.
+digest_cadence: "weekly"
+# Minimum annualized leakage worth flagging in the digest.
+digest_min_leakage: 500
