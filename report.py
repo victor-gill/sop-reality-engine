@@ -64,6 +64,25 @@ def print_report(analysis: dict, sop_less: bool = False):
     for f in gaps:
         print(f"\n  [--] {f['detail']}")
 
+    pg = analysis.get("payroll_gaps", [])
+    if pg or s.get("payroll_provided"):
+        _section(f"5. PAYROLL RECONCILIATION ({len(pg)} gap"
+                 f"{'s' if len(pg) != 1 else ''})")
+        if not pg:
+            print("Every payroll record matches a bank payment and vice versa.")
+        for f in pg:
+            marker = "[!!]" if f["direction"] == "missing_record" else "[>>]"
+            print(f"\n  {marker} {f['detail']}")
+
+    pv = analysis.get("pnl_variance", [])
+    if pv or s.get("pnl_provided"):
+        _section(f"6. P&L VARIANCE — books vs. bank ({len(pv)} flag"
+                 f"{'s' if len(pv) != 1 else ''})")
+        if not pv:
+            print("P&L account totals match bank activity within tolerance.")
+        for f in pv:
+            print(f"\n  [!!] {f['detail']}")
+
     print(f"\n{'=' * 64}\n"
           f"Total annualized unmapped leakage: "
           f"${s['annualized_leakage']:,.2f}\n{'=' * 64}")

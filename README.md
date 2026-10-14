@@ -16,10 +16,14 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ## Run it
 
 ```bash
-# Phase 1: terminal report
-.venv/bin/python main.py --sop sample_data/sample_sop.txt --csv sample_data/sample_bank.csv
-.venv/bin/python main.py --csv my_bank_export.csv            # SOP-less mode: no SOP needed
-.venv/bin/python main.py --sop my_sop.pdf --csv my_bank_export.csv --json findings.json
+# Phase 1: terminal report — 1 to 4 input documents
+.venv/bin/python main.py --sop sample_data/sample_sop.txt \
+    --bank sample_data/sample_bank.csv \
+    --payroll sample_data/sample_payroll.csv \
+    --pnl sample_data/sample_pnl.csv \
+    --logistics sample_data/sample_logistics.csv
+.venv/bin/python main.py --bank my_bank_export.csv            # SOP-less mode: no SOP needed
+.venv/bin/python main.py --sop my_sop.pdf --bank my_bank_export.csv --json findings.json
 
 # Phase 3: web UI
 .venv/bin/streamlit run app.py
@@ -35,6 +39,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
    flagged for human verification.
 4. **Cycle-time gaps** — documented cadence (e.g. monthly) drifting from
    actual payment cadence.
+5. **Payroll reconciliation** — payroll records with no matching bank
+   payment (unallocated/missing funds) and bank payroll payments with no
+   payroll record (unknown charges).
+6. **P&L variance** — accounts where the books diverge from actual bank
+   spend by period (miscategorization, missing transactions).
 
 ## Inputs
 
@@ -44,8 +53,15 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
     `sample_data/sample_sop.txt`.
   - *Free prose* (needs `ANTHROPIC_API_KEY`): any SOP document; Claude
     extracts the structured steps.
-- **Bank CSV**: flexible headers — auto-detects date/payee/amount columns
-  (`Date`, `Description`, `Amount`, etc.).
+- **Bank CSV** (`--bank`, required): flexible headers — auto-detects
+  date/payee/amount columns (`Date`, `Description`, `Amount`, etc.).
+- **Payroll CSV** (`--payroll`, optional): employee, pay date, net/gross
+  pay. Joins the event log and powers payroll reconciliation.
+- **P&L export** (`--pnl`, optional): transaction detail *or* an account ×
+  period matrix (`Account, Jan 2026, Feb 2026, ...`).
+- **Logistics CSV** (`--logistics`, optional): shipment date, carrier,
+  cost, origin, destination. Another dataset, same shape — timestamped
+  cost events that flow into the full analysis.
 
 ## Sample output
 
@@ -70,6 +86,12 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
   step's role owner). Tasks carry a concrete first action and a status
   lifecycle (open → in_progress → resolved). Surfaced as the Task Queue
   tab in the UI — the meeting killer.
-- **SOP-less mode** ✅ — most SMBs have no written SOPs, so `--csv` alone
+- **SOP-less mode** ✅ — most SMBs have no written SOPs, so `--bank` alone
   infers the actual process from transaction history. Strongest wedge for
   the free-audit offer.
+- **Phase 5** ✅ — multi-document audits: `--payroll` (payroll
+  reconciliation — records without payments, payments without records),
+  `--pnl` (books-vs-bank variance by account and period), and
+  `--logistics` (shipments as another dataset, same event shape). New
+  findings route into the Task Queue (P1 → Payroll Lead, variance →
+  Controller).

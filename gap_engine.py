@@ -151,14 +151,23 @@ def find_cycle_gaps(steps: list[dict], events: pd.DataFrame) -> list[dict]:
     return findings
 
 
-def analyze(steps: list[dict], events: pd.DataFrame) -> dict:
+def analyze(steps: list[dict], events: pd.DataFrame,
+            payroll: pd.DataFrame | None = None,
+            pnl: pd.DataFrame | None = None) -> dict:
     """Run the full gap analysis. Returns findings grouped by type."""
     leakage = find_unmapped_leakage(steps, events)
+    bank_only = events[events["source"] == "bank"] if "source" in events.columns else events
+    payroll_gaps = (find_payroll_gaps(payroll, bank_only)
+                    if payroll is not None and not payroll.empty else [])
+    pnl_variance = (find_pnl_variance(pnl, bank_only)
+                    if pnl is not None and not pnl.empty else [])
     return {
         "unmapped_leakage": leakage,
         "sop_deviations": find_sop_deviations(steps, events),
         "threshold_reviews": find_threshold_reviews(steps, events),
         "cycle_gaps": find_cycle_gaps(steps, events),
+        "payroll_gaps": payroll_gaps,
+        "pnl_variance": pnl_variance,
         "summary": {
             "steps_parsed": len(steps),
             "events_analyzed": len(events),
@@ -166,5 +175,94 @@ def analyze(steps: list[dict], events: pd.DataFrame) -> dict:
             "monthly_leakage": round(sum(f["monthly_cost"] for f in leakage), 2),
             "annualized_leakage": round(
                 sum(f["annualized"] for f in leakage), 2),
+            "sources": sorted(events["source"].unique().tolist())
+            if "source" in events.columns else ["bank"],
+            "payroll_provided": payroll is not None and not payroll.empty,
+            "pnl_provided": pnl is not None and not pnl.empty,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Cross-source reconciliation
+# ---------------------------------------------------------------------------
+
+def _close_match(txn, pool, day_tol=5, amt_tol=0.02):
+    """Find pool events within +/- days and amount tolerance."""
+    lo, hi = txn["timestamp"] - pd.Timedelta(days=day_tol), txn["timestamp"] + pd.Timedelta(days=day_tol)
+    cands = pool[(pool["timestamp"] >= lo) & (pool["timestamp"] <= hi)]
+    return cands[abs(cands["amount"] - txn["amount"]) / txn["amount"] <= amt_tol]
+
+
+def find_payroll_gaps(payroll: pd.DataFrame,
+                      bank: pd.DataFrame) -> list[dict]:
+    """Payroll records with no matching bank payment, and vice versa."""
+    findings = []
+    for _, p in payroll.iterrows():
+        if _close_match(p, bank).empty:
+            findings.append({
+                "type": "payroll_gap",
+                "direction": "missing_payment",
+                "payee": p["vendor_raw"],
+                "amount": round(float(p["amount"]), 2),
+                "date": p["timestamp"].date().isoformat(),
+                "detail": (f"Payroll shows ${p['amount']:,.2f} to "
+                           f"'{p['vendor_raw']}' on {p['timestamp'].date()} "
+                           f"with no matching bank payment — unallocated or "
+                           f"missing funds."),
+            })
+    bank_payroll = bank[bank["category"].isin(["Payroll", "Contractor"])]
+    for _, b in bank_payroll.iterrows():
+        if _close_match(b, payroll).empty:
+            findings.append({
+                "type": "payroll_gap",
+                "direction": "missing_record",
+                "payee": b["vendor_raw"],
+                "amount": round(float(b["amount"]), 2),
+                "date": b["timestamp"].date().isoformat(),
+                "detail": (f"Bank shows payroll-category payment of "
+                           f"${b['amount']:,.2f} to '{b['vendor_raw']}' on "
+                           f"{b['timestamp'].date()} with no payroll record — "
+                           f"unknown charge."),
+            })
+    return findings
+
+
+def find_pnl_variance(pnl: pd.DataFrame, bank: pd.DataFrame,
+                      tol: float = 0.15) -> list[dict]:
+    """P&L account totals vs. actual bank spend per period.
+
+    Flags accounts where the books diverge from the bank by more than
+    `tol` — miscategorization, missing transactions, or timing games.
+    """
+    findings = []
+    bank = bank.copy()
+    bank["period"] = bank["timestamp"].dt.to_period("M").dt.to_timestamp()
+    bank_monthly = bank.groupby(["vendor_payee", "period"])["amount"].sum()
+    for _, row in pnl.iterrows():
+        # Match P&L account to bank vendors by token overlap.
+        acct_tokens = _tokens(row["account_raw"])
+        matched_vendors = [v for v in bank["vendor_payee"].unique()
+                           if acct_tokens & _tokens(v)]
+        bank_total = sum(bank_monthly.get((v, row["period"]), 0)
+                         for v in matched_vendors)
+        pnl_total = row["amount"]
+        if pnl_total < 100:
+            continue
+        variance = abs(bank_total - pnl_total) / pnl_total
+        if variance > tol:
+            direction = "overstated" if pnl_total > bank_total else "understated"
+            findings.append({
+                "type": "pnl_variance",
+                "account": row["account_raw"],
+                "period": row["period"].strftime("%b %Y"),
+                "pnl_total": round(pnl_total, 2),
+                "bank_total": round(bank_total, 2),
+                "variance_pct": round(variance * 100, 1),
+                "detail": (f"P&L {direction} '{row['account_raw']}' for "
+                           f"{row['period'].strftime('%b %Y')}: books say "
+                           f"${pnl_total:,.2f}, bank shows "
+                           f"${bank_total:,.2f} "
+                           f"({variance * 100:.0f}% variance)."),
+            })
+    return sorted(findings, key=lambda f: f["variance_pct"], reverse=True)

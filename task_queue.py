@@ -22,6 +22,10 @@ def _assignee(finding: dict, steps_by_id: dict) -> str:
     if ftype in ("unmapped_leakage", "threshold_review"):
         # Money moving with no paper trail -> the operator owns it.
         return "Operator"
+    if ftype == "payroll_gap":
+        return "Payroll Lead"
+    if ftype == "pnl_variance":
+        return "Controller"
     step = steps_by_id.get(finding.get("step_id", ""), {})
     return step.get("assigned_role") or "Operator"
 
@@ -29,6 +33,10 @@ def _assignee(finding: dict, steps_by_id: dict) -> str:
 def _priority(finding: dict) -> str:
     if finding["type"] == "threshold_review":
         return "P1"  # approval breach — urgent by definition
+    if finding["type"] == "payroll_gap":
+        return "P1"  # money to people — always urgent
+    if finding["type"] == "pnl_variance":
+        return "P2" if finding.get("variance_pct", 0) > 50 else "P3"
     if finding["type"] == "unmapped_leakage":
         return "P1" if finding.get("annualized", 0) > 1000 else "P2"
     if finding["type"] == "sop_deviation":
@@ -38,6 +46,16 @@ def _priority(finding: dict) -> str:
 
 def _title(finding: dict) -> str:
     t = finding["type"]
+    if t == "payroll_gap":
+        if finding["direction"] == "missing_payment":
+            return (f"Unpaid payroll record: ${finding['amount']:,.2f} to "
+                    f"{finding['payee']} ({finding['date']})")
+        return (f"Bank payroll payment with no record: "
+                f"${finding['amount']:,.2f} to {finding['payee']} "
+                f"({finding['date']})")
+    if t == "pnl_variance":
+        return (f"Reconcile '{finding['account']}' {finding['period']}: "
+                f"{finding['variance_pct']:.0f}% books-vs-bank variance")
     if t == "unmapped_leakage":
         return (f"Investigate unmapped {finding['cadence']} spend: "
                 f"{finding['vendor_display']} (~${finding['monthly_cost']:,.2f}/mo)")
@@ -53,6 +71,19 @@ def _title(finding: dict) -> str:
 
 def _first_action(finding: dict) -> str:
     t = finding["type"]
+    if t == "payroll_gap":
+        if finding["direction"] == "missing_payment":
+            return (f"Confirm whether {finding['payee']} was actually paid "
+                    f"on {finding['date']} — check for a second account, "
+                    f"a voided check, or a duplicate payroll entry.")
+        return (f"Trace the ${finding['amount']:,.2f} bank payment to "
+                f"{finding['payee']} on {finding['date']} — find the payroll "
+                f"record or flag it as unauthorized.")
+    if t == "pnl_variance":
+        return (f"Pull the GL detail for '{finding['account']}' "
+                f"({finding['period']}) and match it line-by-line against "
+                f"bank transactions to find the miscategorized or missing "
+                f"entries.")
     if t == "unmapped_leakage":
         return ("Confirm what this subscription is for. Keep it: add an SOP step. "
                 "Kill it: cancel and confirm the charge stops.")
@@ -69,7 +100,9 @@ def generate_tasks(analysis: dict, steps: list[dict]) -> list[dict]:
     """Convert every finding into a routed, prioritized task."""
     steps_by_id = {s["step_id"]: s for s in steps}
     findings = (analysis["threshold_reviews"] + analysis["unmapped_leakage"]
-                + analysis["sop_deviations"] + analysis["cycle_gaps"])
+                + analysis["sop_deviations"] + analysis["cycle_gaps"]
+                + analysis.get("payroll_gaps", [])
+                + analysis.get("pnl_variance", []))
     tasks = []
     for i, f in enumerate(findings, 1):
         tasks.append({
@@ -80,7 +113,8 @@ def generate_tasks(analysis: dict, steps: list[dict]) -> list[dict]:
             "type": f["type"],
             "assignee": _assignee(f, steps_by_id),
             "priority": _priority(f),
-            "amount": f.get("annualized") or f.get("amount"),
+            "amount": (f.get("annualized") or f.get("amount")
+                       or f.get("pnl_total")),
             "created": date.today().isoformat(),
             "status": "open",
         })
