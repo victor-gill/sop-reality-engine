@@ -7,6 +7,9 @@ This is the automated version of an operational audit: the SOP says what
 *should* happen, the bank statement says what *actually* happened, and the
 gap between them is where money leaks.
 
+**Live demo:** https://sop-reality-engine.streamlit.app/ — if it shows the
+Streamlit sleep screen, one click wakes it back up.
+
 ## Setup
 
 ```bash

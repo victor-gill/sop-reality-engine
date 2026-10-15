@@ -1,48 +1,57 @@
 # SOP Reality Engine — 90-Second Demo Recording Script
 
-Screen-only, faceless. Record at 1080p. Works against the local app
-(`.venv/bin/streamlit run app.py`) now, or the live Streamlit link once deployed.
+Screen-only, faceless. Record at 1080p. Use the live app
+(https://sop-reality-engine.streamlit.app/) — if it shows the Streamlit
+sleep screen, one click wakes it. Record the app window only, 1080p.
 One take is fine — the red nodes carry it.
 
 ## The script
 
-**0:00–0:10 — Hook (app home screen)**
-"This business had 6 documented processes and 6 months of bank data. In 90
-seconds, I'll show you where $2,485 a year is leaking out — and exactly who
-should fix it."
+**0:00–0:08 — Hook (app home screen)**
+"Most businesses are losing money they can't see. Unused subscriptions.
+Invoices nobody approved. Payroll that doesn't match the bank. I built a
+tool that finds all of it — from three documents."
 
-**0:10–0:25 — The input (upload screen)**
-"All I need is two files: their SOP and one bank export. Ten seconds to upload."
-[Drag in sample_sop.txt and sample_bank.csv. Click run.]
+**0:08–0:25 — The input (upload screen)**
+"This is Meridian Logistics, a demo business. Three files: bank export,
+payroll, P&L. Sixty-three transactions across ten vendors, six months.
+That's the whole setup. Watch."
+[Click Sample data, let the dashboard land.]
 
-**0:25–0:45 — The Reality Map**
-"Blue is what they said they do. Green is what the money shows. Red — that's
-what nobody can explain."
-[Scroll the map; hover the red unmapped nodes.]
+**0:25–0:55 — The money shots (findings dashboard)**
+"Sixty-three transactions. Fourteen findings. About $5,069 a year leaving
+the business with no documented process — that red is unmapped spend.
+A freight carrier billing $215 a month that appears in no SOP. A payroll
+record to a name with no matching bank payment. The books overstate Twilio
+by 84% — $720 on the books, $117 at the bank."
+[Scroll the Reality Map: "Blue is the documented process. Green is spend
+that matches it. Red is the leak."]
 
-**0:45–1:05 — The money shots (findings dashboard)**
-"Two subscriptions with no SOP behind them — $2,485 a year, just going out.
-This invoice blew past their $5,000 approval rule at $6,800 — nobody approved
-it. And they documented a quarterly safety audit they never actually paid for."
-[Click through the finding cards.]
+**0:55–1:15 — The meeting killer (Task Queue + Approvals tabs)**
+"But findings are just a list. Every one routes to the person who owns it —
+money flags to the operator, the books mismatch to the controller, payroll
+gaps to the payroll lead — each with a first step: confirm it, dismiss it
+with a reason, or escalate. Nobody needs a Monday meeting to learn any of
+this. The system already told the right person."
+[Open Approvals: "And over-threshold payments don't die in a terminal.
+That $6,800 invoice — over the $5,000 rule — waits for one tap."]
 
-**1:05–1:20 — The meeting killer (Task Queue tab)**
-"Here's why this isn't a report — it's an operating system. Every finding
-becomes an assigned task with a first action. Money flags go to the operator.
-The audit gap goes to compliance. The fuel drift goes to the fleet coordinator.
-Nobody needs a Monday meeting to learn any of this."
-[Show the 5 tasks with priorities and owners.]
-
-**1:20–1:30 — CTA (end card)**
-"Free audit — send me one bank export, no SOP needed, and I'll show you your
-real process and where it leaks."
-[End card: https://github.com/victor-gill/sop-reality-engine + terrascopeops.com once the domain is live.]
+**1:15–1:30 — CTA (end card)**
+"Free audit — send me your bank export, no SOP needed, and I'll show you
+your real process and where it leaks."
+[End card: the live app URL + https://github.com/victor-gill/sop-reality-engine
++ terrascopeops.com once the domain is live.]
 
 ## Posting notes
 
 - LinkedIn prefers native video uploads. Post the video + the repo link + the
-  paste-ready LinkedIn Projects copy (already written tonight).
-- Record with the live Streamlit URL in the browser bar once deployed —
-  it reads as a real product, not a localhost demo.
-- The sample-data numbers ($2,485/yr unmapped, $6,800 breach) are the whole
-  pitch. Don't over-explain the tech; let the red do the work.
+  paste-ready LinkedIn Projects copy.
+- The headline numbers ($5,069/yr unmapped, 14 findings, $6,800 breach) are
+  the whole pitch. Don't over-explain the tech; let the red do the work.
+- The live app sleeps when idle (free tier) — if you want to record against
+  it rather than localhost, wake it a minute before you hit record.
+- Never use real client data, even anonymized. The Meridian sample only.
+
+---
+Supersedes the earlier draft (which used the Phase-1 synthetic numbers —
+6 SOP steps x 42 transactions, $2,485/yr). Current as of 2026-10-15.
