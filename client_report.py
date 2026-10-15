@@ -76,6 +76,132 @@ def _task_for(tasks, finding) -> dict | None:
     return None
 
 
+def spending_chart(findings: dict, cfg: dict, out_path: str) -> dict | None:
+    """Pie chart of real spend by category, auxiliary slices highlighted.
+
+    Internal transfers are excluded (moving money is not spending).
+    Small non-auxiliary slices roll into "Other"; auxiliary slices are
+    always shown separately — they are the point. Returns chart stats
+    for the report, or None when there is nothing to plot.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import math
+    import matplotlib.pyplot as plt
+
+    cats = findings["summary"].get("spending_by_category") or {}
+    transfers = {c.lower() for c in cfg.get("transfer_categories", [])}
+    aux_names = {c.lower() for c in cfg.get("auxiliary_categories", [])}
+    excluded = sum(v["total"] for c, v in cats.items()
+                   if c.lower() in transfers)
+    spend = [(c, v["total"]) for c, v in cats.items()
+             if c.lower() not in transfers and v["total"] > 0]
+    if not spend:
+        return None
+    total = sum(t for _, t in spend)
+    spend.sort(key=lambda x: -x[1])
+
+    labels, sizes, colors, explode = [], [], [], []
+    other = 0.0
+    for name, amt in spend:
+        is_aux = name.lower() in aux_names
+        if not is_aux and amt / total < 0.02:
+            other += amt
+            continue
+        labels.append(f"{name}\n${amt:,.0f}")
+        sizes.append(amt)
+        colors.append("#c0392b" if is_aux else "#5d6d7e")
+        explode.append(0.08 if is_aux else 0.0)
+    if other:
+        labels.append(f"Other\n${other:,.0f}")
+        sizes.append(other)
+        colors.append("#d5d8dc")
+        explode.append(0.0)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    wedges, _ = ax.pie(sizes, colors=colors, explode=explode,
+                       startangle=90, counterclock=False)
+    # Percentages on the pie for big slices only; everything else lives
+    # in the legend so labels never overlap.
+    total_s = sum(sizes)
+    for w, s in zip(wedges, sizes):
+        if s / total_s >= 0.05:
+            ang = (w.theta2 + w.theta1) / 2
+            x = 0.65 * math.cos(math.radians(ang))
+            y = 0.65 * math.sin(math.radians(ang))
+            ax.text(x, y, f"{s / total_s:.0%}", ha="center", va="center",
+                    fontsize=10, color="white", weight="bold")
+    legend_labels = []
+    for name, amt in zip(labels, sizes):
+        clean = name.split("\n")[0]
+        mark = " ●" if clean.lower() in aux_names else ""
+        legend_labels.append(f"{clean} — ${amt:,.0f}{mark}")
+    ax.legend(wedges, legend_labels, loc="center left",
+              bbox_to_anchor=(0.92, 0.5), fontsize=8, frameon=False,
+              title="● = auxiliary spend", title_fontsize=8)
+    ax.set_title("Where the money went (auxiliary spend in red)",
+                 fontsize=12, pad=16)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    aux_total = sum(t for c, t in spend if c.lower() in aux_names)
+    return {"spend_total": round(total, 2),
+            "aux_total": round(aux_total, 2),
+            "aux_share": round(aux_total / total * 100, 1) if total else 0,
+            "excluded_transfers": round(excluded, 2)}
+
+
+def _spending_section(findings: dict, cfg: dict, chart_file: str | None,
+                      stats: dict | None) -> list[str]:
+    """'Where the money went' — the category breakdown with auxiliary
+    spend called out. Victor's original audit lens, now automated."""
+    s = findings["summary"]
+    cats = s.get("spending_by_category") or {}
+    if not cats:
+        return []
+    period = ""
+    if s.get("period_start"):
+        period = f" ({s['period_start']} → {s['period_end']})"
+    L = ["## Where the money went", ""]
+    if chart_file and stats:
+        L += [f"![Spending by category]({chart_file})", "",
+              f"**Outflow:** {_money(stats['spend_total'])} across the data "
+              f"window{period}, excluding "
+              f"{_money(stats['excluded_transfers'])} in internal transfers "
+              "(moving money between accounts is not spending).",
+              "",
+              f"**Auxiliary (non-essential) spend: "
+              f"{_money(stats['aux_total'])} — {stats['aux_share']}% of "
+              f"real outflow.** Personal and lifestyle categories running "
+              f"through business accounts. Keep-or-kill, line by line.",
+              "",
+              f"{EDIT}auditor note — which auxiliary categories the client "
+              "defends as business-necessary, and which get killed.",
+              ""]
+    L += ["| Category | Total | Share of outflow | Transactions |",
+          "|---|---|---|---|"]
+    spend_total = (stats["spend_total"] if stats else
+                   sum(v["total"] for v in cats.values()))
+    transfers = {c.lower() for c in cfg.get("transfer_categories", [])}
+    shown_excluded = []
+    for name, v in sorted(cats.items(), key=lambda x: -x[1]["total"]):
+        if name.lower() in transfers:
+            shown_excluded.append(f"{name} ({_money(v['total'])})")
+            continue
+        share = v["total"] / spend_total * 100 if spend_total else 0
+        L.append(f"| {name} | {_money(v['total'])} | {share:.1f}% | "
+                 f"{v['transactions']} |")
+    if shown_excluded:
+        L += ["",
+              f"_Excluded from outflow (internal transfers, not spending): "
+              f"{', '.join(shown_excluded)}._"]
+    L += ["",
+          f"{EDIT}add anything specific to this engagement.",
+          ""]
+    return L
+
+
 def _finding_block(finding, tasks, num) -> list[str]:
     t = _task_for(tasks, finding)
     action = t["first_action"] if t else ""
@@ -113,7 +239,9 @@ def count_edits(markdown: str) -> int:
 
 
 def build_report(findings: dict, tasks: list | None,
-                 business: str, final: bool = False) -> str:
+                 business: str, final: bool = False,
+                 cfg: dict | None = None,
+                 chart_path: str | None = None) -> str:
     s = findings["summary"]
     today = date.today().isoformat()
     L = [
@@ -155,6 +283,16 @@ def build_report(findings: dict, tasks: list | None,
     if s.get("pnl_provided"):
         L.append(f"- **P&L variance flags:** {len(findings['pnl_variance'])}")
     L += ["", "---", ""]
+
+    if cfg is not None:
+        stats = None
+        chart_file = None
+        if chart_path:
+            stats = spending_chart(findings, cfg, chart_path)
+            if stats:
+                chart_file = Path(chart_path).name
+        L += _spending_section(findings, cfg, chart_file, stats)
+        L += ["---", ""]
 
     sections = [
         ("Unmapped spend — money leaving with no documented process",
@@ -221,42 +359,79 @@ def _rich(paragraph, text: str):
             run.bold = True
 
 
-def to_docx(markdown: str, path: str):
+def to_docx(markdown: str, path: str, image_dir: str | Path = "."):
     """Minimal markdown → .docx so the deliverable looks finished.
-    Handles headings, bold, bullets, checkboxes, blockquotes, and rules."""
+    Handles headings, bold, bullets, checkboxes, blockquotes, rules,
+    tables, and ![alt](file) images."""
     from docx import Document
-    from docx.shared import Pt, RGBColor
+    from docx.shared import Pt, RGBColor, Inches
 
     doc = Document()
     style = doc.styles["Normal"]
     style.font.size = Pt(11)
+    image_dir = Path(image_dir)
+    current_table = None
+    current_cols = 0
+
+    def _is_sep(cells):
+        return all(set(c) <= set("-: ") and "-" in c for c in cells if c)
 
     for raw in markdown.splitlines():
         line = raw.strip()
         if not line:
+            current_table = None
             continue
         if line.startswith("### "):
             doc.add_heading(line[4:], level=3)
+            current_table = None
         elif line.startswith("## "):
             doc.add_heading(line[3:], level=2)
+            current_table = None
         elif line.startswith("# "):
             doc.add_heading(line[2:], level=1)
+            current_table = None
         elif line == "---":
             doc.add_paragraph().add_run().add_break()
+            current_table = None
+        elif line.startswith("!["):
+            src = line.split("](", 1)[1].rstrip(")")
+            img = image_dir / src
+            if img.exists():
+                doc.add_picture(str(img), width=Inches(6))
+                doc.paragraphs[-1].alignment = 1  # center
+            current_table = None
+        elif line.startswith("|"):
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if _is_sep(cells):
+                continue
+            if current_table is None or current_cols != len(cells):
+                current_table = doc.add_table(rows=1, cols=len(cells))
+                current_table.style = "Light Grid Accent 1"
+                current_cols = len(cells)
+                target = current_table.rows[0].cells
+            else:
+                target = current_table.add_row().cells
+            for cell, val in zip(target, cells):
+                cell.text = ""
+                _rich(cell.paragraphs[0], val)
         elif line.startswith(("- [ ]", "- [x]")):
             p = doc.add_paragraph(style="List Bullet")
             _rich(p, line[5:].replace("&nbsp;", " "))
+            current_table = None
         elif line.startswith("- "):
             p = doc.add_paragraph(style="List Bullet")
             _rich(p, line[2:])
+            current_table = None
         elif line.startswith("> "):
             p = doc.add_paragraph(style="Intense Quote")
             run = p.add_run(line[2:])
             run.italic = True
             run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+            current_table = None
         else:
             p = doc.add_paragraph()
             _rich(p, line.replace("&nbsp;", " "))
+            current_table = None
     doc.save(path)
 
 
@@ -278,24 +453,23 @@ def main():
 
     findings = _load(args.findings)
     tasks = _load(args.tasks)
-    business = args.business
-    if not business and args.config:
-        from config import load_config
-        business = load_config(args.config).get("business_name")
+    from config import load_config
+    cfg = load_config(args.config) if args.config else load_config()
+    business = args.business or cfg.get("business_name")
+    out = Path(args.out)
+    chart_path = str(out.with_name(out.stem + "_spending.png"))
     report = build_report(findings, tasks, business or "Client Business",
-                          final=args.final)
+                          final=args.final, cfg=cfg, chart_path=chart_path)
     n_edits = count_edits(report)
     if args.final and n_edits:
         ap.error(f"refusing: {n_edits} EDIT markers remain — "
                  "complete the auditor pass first")
     if args.format == "docx":
-        out = args.out
-        if not out.lower().endswith(".docx"):
-            out += ".docx"
-        to_docx(report, out)
+        docx_out = str(Path(args.out).with_suffix(".docx"))
+        to_docx(report, docx_out, image_dir=out.parent)
+        out = Path(docx_out)
     else:
-        out = args.out
-        Path(out).write_text(report, encoding="utf-8")
+        out.write_text(report, encoding="utf-8")
     n = sum(len(findings[k]) for k in findings if k != "summary")
     print(f"[client_report] {n} findings written to {out} — "
           f"edit the {EDIT.strip()} lines.")

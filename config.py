@@ -26,6 +26,14 @@ _defaults = {
     "roles": {},
     "digest_cadence": "weekly",
     "digest_min_leakage": 500,
+    # Categories highlighted as auxiliary / non-essential spend in the
+    # report's pie chart (the auditor's commingling lens). Per-client.
+    "auxiliary_categories": ["Auxiliary shopping", "Entertainment",
+                             "Fast Food", "GYM", "KIDS",
+                             "Media Subscriptions", "What is this"],
+    # Internal money movement excluded from the spending pie chart —
+    # transfers are not spending.
+    "transfer_categories": ["Bank Transfer"],
 }
 
 
@@ -88,6 +96,11 @@ def validate_config(cfg: dict) -> dict:
     out["digest_cadence"] = cadence
     out["digest_min_leakage"] = _finite_nonneg(
         cfg.get("digest_min_leakage", 500), "digest_min_leakage")
+    for key in ("auxiliary_categories", "transfer_categories"):
+        vals = cfg.get(key) or []
+        if not isinstance(vals, list):
+            raise ValueError(f"{key} must be a list")
+        out[key] = [_plain_str(v, key) for v in vals]
     return out
 
 

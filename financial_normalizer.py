@@ -113,6 +113,7 @@ def detect_ledger_columns(df: pd.DataFrame) -> dict:
                            "counterparty"),
         "amount": _find_col(df, "amount", "debit", "withdrawal", "value"),
         "memo": _find_col(df, "memo", "notes", "reference"),
+        "category": _find_col(df, "category", "cat"),
     }
 
 
@@ -132,6 +133,7 @@ def normalize_ledger(path: str) -> pd.DataFrame:
     payee_col = find("description", "payee", "vendor", "merchant", "counterparty")
     amount_col = find("amount", "debit", "withdrawal", "value")
     memo_col = find("memo", "notes", "reference")
+    cat_col = find("category", "cat")
 
     if not all([date_col, payee_col, amount_col]):
         raise ValueError(
@@ -143,10 +145,17 @@ def normalize_ledger(path: str) -> pd.DataFrame:
         "vendor_raw": df[payee_col].astype(str),
         "amount": pd.to_numeric(df[amount_col], errors="coerce").abs(),
     }).dropna(subset=["timestamp", "amount"])
-    events["category"] = [
-        categorize(v, df[memo_col].iloc[i] if memo_col else "")
-        for i, v in enumerate(events["vendor_payee"])
-    ]
+    if cat_col:
+        # Human categories beat the heuristic — trust the auditor's own
+        # categorization when the ledger already carries one.
+        given = df[cat_col].fillna("").astype(str).str.strip()
+        given = given.where(given != "", "Uncategorized")
+        events["category"] = given.iloc[events.index].tolist()
+    else:
+        events["category"] = [
+            categorize(v, df[memo_col].iloc[i] if memo_col else "")
+            for i, v in enumerate(events["vendor_payee"])
+        ]
     events["source"] = "bank"
     events = detect_frequencies(events).sort_values("timestamp")
     print(f"[normalizer] {len(events)} events from "

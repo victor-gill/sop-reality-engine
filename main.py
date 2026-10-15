@@ -46,6 +46,8 @@ def main():
                          "cost, origin, destination)")
     ap.add_argument("--json", default=None,
                     help="Optional path to write findings as JSON")
+    ap.add_argument("--config", default=None,
+                    help="business_config.yaml to use (default: the repo's)")
     ap.add_argument("--report", default=None,
                     help="Optional path to write an editable client report "
                          "(Markdown, findings pre-filled, judgment left blank)")
@@ -93,20 +95,23 @@ def main():
 
     if args.report:
         from client_report import build_report, count_edits, to_docx
-        cfg = _load_config()
+        from pathlib import Path as _Path
+        cfg = _load_config(args.config)
         tasks = _gen_tasks(analysis, steps)
+        _out = _Path(args.report)
+        _chart = str(_out.with_name(_out.stem + "_spending.png"))
         report_md = build_report(analysis, tasks,
                                  cfg.get("business_name", "Client Business"),
-                                 final=args.report_final)
+                                 final=args.report_final, cfg=cfg,
+                                 chart_path=_chart)
         n_edits = count_edits(report_md)
         if args.report_final and n_edits:
             ap.error(f"refusing: {n_edits} EDIT markers remain — "
                      "complete the auditor pass first")
         out = args.report
         if args.report_format == "docx":
-            if not out.lower().endswith(".docx"):
-                out += ".docx"
-            to_docx(report_md, out)
+            out = str(_Path(args.report).with_suffix(".docx"))
+            to_docx(report_md, out, image_dir=_out.parent)
         else:
             with open(out, "w", encoding="utf-8") as f:
                 f.write(report_md)

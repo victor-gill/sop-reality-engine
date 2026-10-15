@@ -643,7 +643,8 @@ with tab_settings:
             _known = {"business_name", "approval_threshold",
                       "category_thresholds", "auto_pay_vendors",
                       "always_review_vendors", "roles", "digest_cadence",
-                      "digest_min_leakage"}
+                      "digest_min_leakage", "auxiliary_categories",
+                      "transfer_categories"}
             _clean = {k: v for k, v in _incoming.items() if k in _known}
             _merged = load_config(_session_config_path())
             _merged.update(_clean)

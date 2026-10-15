@@ -192,3 +192,78 @@ def test_docx_export_produces_readable_document(tmp_path):
     assert "Operational Audit Report" in texts
     assert "Executive summary" in texts
     assert "Finding 1" in texts
+
+
+# ---------------------------------------------------------------------------
+# Category handling + spending chart (Victor's audit lens)
+# ---------------------------------------------------------------------------
+
+def _cat_csv():
+    return _csv("Date,Description,Amount,Category\n"
+                "2026-01-05,Delta Airlines,400,Travel\n"
+                "2026-02-05,Delta Airlines,420,Travel\n"
+                "2026-03-05,Delta Airlines,410,Travel\n"
+                "2026-01-06,Netflix,15.99,Entertainment\n"
+                "2026-02-06,Netflix,15.99,Entertainment\n"
+                "2026-03-06,Netflix,15.99,Entertainment\n")
+
+
+def _cfg():
+    return {"business_name": "Test Co",
+            "auxiliary_categories": ["Entertainment"],
+            "transfer_categories": ["Bank Transfer"]}
+
+
+def test_human_category_column_beats_heuristic():
+    events = normalize_ledger(_cat_csv())
+    assert set(events["category"].unique()) == {"Travel", "Entertainment"}
+
+
+def test_missing_category_column_falls_back_to_heuristic():
+    path = _csv("Date,Description,Amount\n"
+                "2026-01-05,Delta Airlines,400\n"
+                "2026-02-05,Delta Airlines,420\n")
+    events = normalize_ledger(path)
+    assert len(events) == 2
+    assert all(events["category"].astype(bool))
+
+
+def test_summary_carries_spending_by_category_and_period():
+    s = analyze([], normalize_ledger(_cat_csv()))["summary"]
+    cats = s["spending_by_category"]
+    assert cats["Travel"]["total"] == pytest.approx(1230.0)
+    assert cats["Travel"]["transactions"] == 3
+    assert s["period_start"] == "2026-01-05"
+    assert s["period_end"] == "2026-03-06"
+
+
+def test_spending_chart_highlights_auxiliary_and_excludes_transfers(tmp_path):
+    from client_report import spending_chart
+    analysis = analyze([], normalize_ledger(_cat_csv()))
+    out = tmp_path / "pie.png"
+    stats = spending_chart(analysis, _cfg(), str(out))
+    assert out.exists()
+    assert stats["aux_total"] == pytest.approx(47.97)
+    assert stats["aux_share"] == pytest.approx(3.8)
+    assert stats["excluded_transfers"] == 0
+
+
+def test_config_validates_category_lists():
+    out = validate_config({"auxiliary_categories": ["Fast Food"],
+                           "transfer_categories": []})
+    assert out["auxiliary_categories"] == ["Fast Food"]
+    with pytest.raises(ValueError):
+        validate_config({"auxiliary_categories": "Fast Food"})
+    with pytest.raises(ValueError):
+        validate_config({"transfer_categories": [123]})
+
+
+def test_report_has_where_the_money_went_section(tmp_path):
+    analysis = analyze([], normalize_ledger(_cat_csv()))
+    chart = tmp_path / "r_spending.png"
+    report = build_report(analysis, [], "Test Co", cfg=_cfg(),
+                          chart_path=str(chart))
+    assert "## Where the money went" in report
+    assert "Auxiliary (non-essential) spend" in report
+    assert "r_spending.png" in report
+    assert chart.exists()

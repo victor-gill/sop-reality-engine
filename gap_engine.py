@@ -180,6 +180,14 @@ def analyze(steps: list[dict], events: pd.DataFrame,
     pnl_variance = (find_pnl_variance(pnl, bank_only)
                     if pnl is not None and not pnl.empty else [])
     monthly = round(sum(f["monthly_cost"] for f in leakage), 2)
+    # Spend by category — the auditor's pie chart. Raw totals; the report
+    # decides what counts as auxiliary vs. internal transfers.
+    cat = events.groupby("category")["amount"].agg(["sum", "count"])
+    spending_by_category = {
+        str(c): {"total": round(float(r["sum"]), 2),
+                 "transactions": int(r["count"])}
+        for c, r in cat.iterrows()
+    }
     return {
         "unmapped_leakage": leakage,
         "sop_deviations": find_sop_deviations(steps, events),
@@ -199,6 +207,11 @@ def analyze(steps: list[dict], events: pd.DataFrame,
             if "source" in events.columns else ["bank"],
             "payroll_provided": payroll is not None and not payroll.empty,
             "pnl_provided": pnl is not None and not pnl.empty,
+            "spending_by_category": spending_by_category,
+            "period_start": events["timestamp"].min().date().isoformat()
+            if len(events) else None,
+            "period_end": events["timestamp"].max().date().isoformat()
+            if len(events) else None,
         },
     }
 
