@@ -117,7 +117,7 @@ def run_pipeline(sop_path, csv_path, payroll_path=None, pnl_path=None,
     if dismissed:
         analysis["unmapped_leakage"] = [
             f for f in analysis["unmapped_leakage"]
-            if f["vendor_payee"] not in dismissed]
+            if f["vendor"] not in dismissed]
     tasks = generate_tasks(analysis, steps)
 
     # Generate the agent workflow into the session dir so the Approvals
@@ -290,13 +290,13 @@ with tab_find:
             _match = next(f for f in leak
                           if f["vendor_display"] == _dismiss_choice)
             _dismissed = _dismissed_vendors()
-            _dismissed.add(_match["vendor_payee"])
+            _dismissed.add(_match["vendor"])
             (_session_dir() / "dismissed.json").write_text(
                 _djson.dumps(sorted(_dismissed)))
             # Remove from the live findings and their tasks.
             analysis["unmapped_leakage"] = [
                 f for f in leak
-                if f["vendor_payee"] not in _dismissed]
+                if f["vendor"] not in _dismissed]
             st.session_state["analysis"] = analysis
             st.session_state["tasks"] = [
                 t for t in st.session_state.get("tasks", [])

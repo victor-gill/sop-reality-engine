@@ -85,7 +85,11 @@ def _first_action(finding: dict) -> str:
                 f"bank transactions to find the miscategorized or missing "
                 f"entries.")
     if t == "unmapped_leakage":
-        return ("Confirm what this subscription is for. Keep it: add an SOP step. "
+        what = {"Logistics": "this carrier/route",
+                "Payroll": "this payee",
+                "Contractor": "this contractor"}.get(
+            finding.get("category"), "this subscription")
+        return (f"Confirm what {what} is for. Keep it: add an SOP step. "
                 "Kill it: cancel and confirm the charge stops.")
     if t == "sop_deviation":
         return ("Confirm whether this process still exists. If yes, find why "

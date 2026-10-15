@@ -39,6 +39,18 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m pytest tests/ -q
 ```
 
+## Auditor workflow
+
+- **Validate before reporting:** `docs/audit-validation-checklist.md` —
+  the false-positive patterns per finding type (annual charges misread
+  as monthly, seasonal vendors, known one-offs, accrual timing…).
+  Every finding gets CONFIRM / DISMISS / ESCALATE before it reaches
+  a client.
+- **Draft the client report:** add `--report client-report.md` to any
+  `main.py` run (or use `client_report.py` directly). Every fact is
+  pre-filled from the findings; your judgment goes on the marked
+  `EDIT` lines. You edit instead of write.
+
 ## Privacy & demo notes
 
 - Uploaded files are processed in your session and **deleted after the

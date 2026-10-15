@@ -46,6 +46,9 @@ def main():
                          "cost, origin, destination)")
     ap.add_argument("--json", default=None,
                     help="Optional path to write findings as JSON")
+    ap.add_argument("--report", default=None,
+                    help="Optional path to write an editable client report "
+                         "(Markdown, findings pre-filled, judgment left blank)")
     args = ap.parse_args()
 
     bank_path = args.bank or args.csv
@@ -71,6 +74,9 @@ def main():
 
     pnl = normalize_pnl(args.pnl) if args.pnl else pd.DataFrame()
 
+    from task_queue import generate_tasks as _gen_tasks
+    from config import load_config as _load_config
+
     analysis = analyze(steps, events, payroll=payroll, pnl=pnl)
     print_report(analysis, sop_less=sop_less)
 
@@ -78,6 +84,18 @@ def main():
         with open(args.json, "w", encoding="utf-8") as f:
             json.dump(analysis, f, indent=2, default=str)
         print(f"\nFindings written to {args.json}")
+
+    if args.report:
+        from client_report import build_report
+        cfg = _load_config()
+        tasks = _gen_tasks(analysis, steps)
+        report_md = build_report(analysis, tasks,
+                                 cfg.get("business_name", "Client Business"))
+        with open(args.report, "w", encoding="utf-8") as f:
+            f.write(report_md)
+        n = sum(len(analysis[k]) for k in analysis if k != "summary")
+        print(f"Client report drafted at {args.report} ({n} findings — "
+              f"edit the marked lines).")
 
 
 if __name__ == "__main__":
