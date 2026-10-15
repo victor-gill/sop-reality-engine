@@ -34,7 +34,24 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
     --payroll sample_data/sample_payroll.csv \
     --pnl sample_data/sample_pnl.csv \
     --logistics sample_data/sample_logistics.csv
+
+# Tests
+.venv/bin/python -m pytest tests/ -q
 ```
+
+## Privacy & demo notes
+
+- Uploaded files are processed in your session and **deleted after the
+  run** — nothing is stored.
+- Every visitor gets an isolated session: uploads, settings, approvals,
+  and tasks never touch another session.
+- The hosted demo is synthetic-data-only (sample dataset). The scheduled
+  loop (`runner.py` + digest + approvals) runs on your own machine or
+  VPS; the app will show its digest banner when it finds a local
+  `state/digest.json`.
+- This is a demo/POC, not production software: no auth, no tenant
+  isolation, no real payment rails (auto-pay marks intent; it never
+  moves money).
 
 ## What it finds
 

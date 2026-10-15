@@ -194,21 +194,39 @@ def extract_steps_llm(text: str) -> list[dict]:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def parse_sop(path: str) -> list[dict]:
+# Set True when the most recent parse_sop call used the LLM (for
+# per-session spend caps in hosted deployments).
+last_used_llm = False
+
+
+def parse_sop(path: str, allow_llm: bool = True) -> list[dict]:
     """Parse an SOP file into structured steps.
 
-    Uses the LLM extractor when ANTHROPIC_API_KEY is set, otherwise falls
-    back to the rules-based parser (works with labeled-format SOPs).
+    Rules-based parser runs first (free, deterministic — handles
+    labeled-format SOPs). The LLM extractor is only used when the rules
+    parser finds nothing AND ANTHROPIC_API_KEY is set, so free-prose
+    SOPs still work without spending credits on documents the rules
+    already handle. Set allow_llm=False to disable LLM use entirely
+    (e.g. after a per-session cap is reached). SOPRE_FORCE_LLM=1
+    forces the LLM path even when rules succeed.
     """
+    global last_used_llm
+    last_used_llm = False
     text = load_sop_text(path)
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    steps = extract_steps_rules(text)
+    if steps and not os.environ.get("SOPRE_FORCE_LLM"):
+        print(f"[sop_parser] Rules-based parser extracted {len(steps)} steps.")
+        return steps
+    if allow_llm and os.environ.get("ANTHROPIC_API_KEY"):
         try:
             steps = extract_steps_llm(text)
+            last_used_llm = True
             print(f"[sop_parser] LLM extracted {len(steps)} steps.")
             return steps
         except Exception as exc:  # fall through to rules on any failure
             print(f"[sop_parser] LLM extraction failed ({exc}); "
                   "falling back to rules-based parser.")
-    steps = extract_steps_rules(text)
+    if not steps:
+        steps = extract_steps_rules(text)
     print(f"[sop_parser] Rules-based parser extracted {len(steps)} steps.")
     return steps

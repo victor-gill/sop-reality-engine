@@ -93,6 +93,29 @@ def detect_frequencies(events: pd.DataFrame) -> pd.DataFrame:
 # Public entry point
 # ---------------------------------------------------------------------------
 
+def _find_col(df: pd.DataFrame, *candidates):
+    for col in df.columns:
+        if str(col).strip().lower() in candidates:
+            return col
+    return None
+
+
+def detect_ledger_columns(df: pd.DataFrame) -> dict:
+    """Show which CSV headers were mapped to date/payee/amount.
+
+    Returned for the upload preview so the user can see (and trust)
+    the auto-detection before the pipeline runs.
+    """
+    return {
+        "date": _find_col(df, "date", "posted", "transaction date",
+                          "trans date"),
+        "payee": _find_col(df, "description", "payee", "vendor", "merchant",
+                           "counterparty"),
+        "amount": _find_col(df, "amount", "debit", "withdrawal", "value"),
+        "memo": _find_col(df, "memo", "notes", "reference"),
+    }
+
+
 def normalize_ledger(path: str) -> pd.DataFrame:
     """Read a bank CSV and return the standard event log.
 
@@ -103,10 +126,7 @@ def normalize_ledger(path: str) -> pd.DataFrame:
     df = pd.read_csv(path)
 
     def find(*candidates):
-        for col in df.columns:
-            if col.strip().lower() in candidates:
-                return col
-        return None
+        return _find_col(df, *candidates)
 
     date_col = find("date", "posted", "transaction date", "trans date")
     payee_col = find("description", "payee", "vendor", "merchant", "counterparty")

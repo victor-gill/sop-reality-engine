@@ -26,30 +26,84 @@ st.title("SOP Reality Engine")
 st.caption("What your SOPs say vs. what your money does — "
            "the gap is where profit leaks.")
 
-# --- Tuesday-morning digest (written by runner.py) ---------------------------
+# --- Tuesday-morning digest (written by a local runner.py run) -----------------
 _digest_path = STATE_DIR / "digest.json"
 if _digest_path.exists():
     import json
     _digest = json.loads(_digest_path.read_text())
-    st.info(f"**Latest run** ({_digest['run_at'][:10]}): "
-            f"{_digest['headline']}")
+    st.info(f"**Latest scheduled run** ({_digest['run_at'][:10]}, "
+            f"from your local runner): {_digest['headline']}")
+
+def _dataframe(data, **kw):
+    """st.dataframe with full width — new API when available, fallback."""
+    try:
+        return st.dataframe(data, width="stretch", **kw)
+    except TypeError:
+        return st.dataframe(data, use_container_width=True, **kw)
+
+
+def _graphviz(dot: str):
+    try:
+        return st.graphviz_chart(dot, width="stretch")
+    except TypeError:
+        return st.graphviz_chart(dot, use_container_width=True)
+
 
 SAMPLE_SOP = Path(__file__).parent / "sample_data" / "sample_sop.txt"
 SAMPLE_CSV = Path(__file__).parent / "sample_data" / "sample_bank.csv"
+SAMPLE_PAYROLL = Path(__file__).parent / "sample_data" / "sample_payroll.csv"
+SAMPLE_PNL = Path(__file__).parent / "sample_data" / "sample_pnl.csv"
+SAMPLE_LOGISTICS = Path(__file__).parent / "sample_data" / "sample_logistics.csv"
+
+# --- Per-session isolation ---------------------------------------------------
+# Every visitor gets their own working directory: uploads, generated
+# workflow, approvals, and settings never touch another session or the
+# shared ./state directory (which the local runner owns).
+def _session_dir() -> Path:
+    if "session_dir" not in st.session_state:
+        d = Path(tempfile.mkdtemp(prefix="sopre_session_"))
+        st.session_state["session_dir"] = str(d)
+        import shutil
+        shutil.copy(HERE / "business_config.yaml",
+                    d / "business_config.yaml")
+    return Path(st.session_state["session_dir"])
 
 
-def _save_upload(uploaded) -> str:
+def _session_config_path() -> str:
+    return str(_session_dir() / "business_config.yaml")
+
+
+def _dismissed_vendors() -> set:
+    p = _session_dir() / "dismissed.json"
+    if p.exists():
+        import json
+        return set(json.loads(p.read_text()))
+    return set()
+
+
+def _save_upload(uploaded, session_dir: Path) -> str:
+    """Write an upload into the session dir. Caller must delete it."""
     suffix = Path(uploaded.name).suffix
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix,
+                                      dir=str(session_dir))
     tmp.write(uploaded.getbuffer())
     tmp.close()
     return tmp.name
 
 
+MAX_LLM_PARSES_PER_SESSION = 3
+
+
 def run_pipeline(sop_path, csv_path, payroll_path=None, pnl_path=None,
-                 logistics_path=None):
+                 logistics_path=None, dismissed=None, seed_demo=False):
     import pandas as pd
-    steps = parse_sop(sop_path) if sop_path else []
+    import sop_parser
+    sdir = _session_dir()
+    allow_llm = st.session_state.get("llm_parses", 0) < MAX_LLM_PARSES_PER_SESSION
+    steps = parse_sop(sop_path, allow_llm=allow_llm) if sop_path else []
+    if sop_parser.last_used_llm:
+        st.session_state["llm_parses"] = \
+            st.session_state.get("llm_parses", 0) + 1
     frames = [normalize_ledger(csv_path)]
     payroll = pd.DataFrame()
     if payroll_path:
@@ -60,13 +114,61 @@ def run_pipeline(sop_path, csv_path, payroll_path=None, pnl_path=None,
     events = pd.concat(frames, ignore_index=True).sort_values("timestamp")
     pnl = normalize_pnl(pnl_path) if pnl_path else pd.DataFrame()
     analysis = analyze(steps, events, payroll=payroll, pnl=pnl)
+    if dismissed:
+        analysis["unmapped_leakage"] = [
+            f for f in analysis["unmapped_leakage"]
+            if f["vendor_payee"] not in dismissed]
     tasks = generate_tasks(analysis, steps)
+
+    # Generate the agent workflow into the session dir so the Approvals
+    # tab can execute decisions against this exact run.
+    if steps:
+        import importlib.util
+        wf_path = sdir / "workflow.py"
+        generate_workflow(steps, out_path=str(wf_path))
+        st.session_state["workflow_path"] = str(wf_path)
+        if seed_demo:
+            # Seed one demo approval so the loop is visible end to end.
+            import os
+            os.environ["SOPRE_CONFIG"] = _session_config_path()
+            spec = importlib.util.spec_from_file_location(
+                "sop_workflow_demo", str(wf_path))
+            wf = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(wf)
+            wf.run_transaction("Acme Industrial Supply", 6800.00,
+                               "demo-seed-1", str(sdir / "approvals"),
+                               memo="seeded demo approval")
     return steps, events, analysis, tasks
+
+
+def _load_workflow_module():
+    """Import the session's generated workflow after verifying provenance.
+
+    Refuses to execute the file unless it carries the generator's marker
+    header — the path must never be reachable from user input.
+    """
+    import importlib.util
+    wf_path = Path(st.session_state.get("workflow_path", ""))
+    expected_dir = _session_dir().resolve()
+    if not wf_path.exists() or expected_dir not in wf_path.resolve().parents:
+        raise FileNotFoundError("no generated workflow for this session")
+    head = wf_path.read_text(encoding="utf-8")[:500]
+    if "Auto-generated agent workflow" not in head:
+        raise ValueError("workflow file failed provenance check")
+    import os
+    os.environ["SOPRE_CONFIG"] = _session_config_path()
+    spec = importlib.util.spec_from_file_location("sop_workflow",
+                                                  str(wf_path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 # ---------------------------------------------------------------------------
 # Input
 # ---------------------------------------------------------------------------
+st.caption("Your files are processed in this session and deleted after the "
+           "run — nothing is uploaded or stored anywhere.")
 col1, col2 = st.columns(2)
 with col1:
     sop_file = st.file_uploader("SOP document (.pdf / .txt / .md) — optional",
@@ -78,28 +180,64 @@ with col2:
 logistics_file = st.file_uploader("Logistics / shipments CSV — optional",
                                   type=["csv"])
 
+# Column-mapping preview: show the auto-detection before the run.
+if csv_file:
+    with st.expander("Column mapping preview — what the engine detected"):
+        import pandas as pd
+        from financial_normalizer import detect_ledger_columns
+        _preview = pd.read_csv(csv_file, nrows=5)
+        _mapping = detect_ledger_columns(_preview)
+        for role, col in _mapping.items():
+            st.write(f"- **{role}**: {col if col else '⚠️ not detected'}")
+        if not all([_mapping["date"], _mapping["payee"],
+                    _mapping["amount"]]):
+            st.warning("The engine couldn't map a required column. "
+                       "Rename your headers to something like "
+                       "Date / Description / Amount and re-upload.")
+        csv_file.seek(0)
+
 use_sample = st.button("Or load the sample dataset")
 run = st.button("Run analysis", type="primary")
-
-SAMPLE_PAYROLL = Path(__file__).parent / "sample_data" / "sample_payroll.csv"
-SAMPLE_PNL = Path(__file__).parent / "sample_data" / "sample_pnl.csv"
-SAMPLE_LOGISTICS = Path(__file__).parent / "sample_data" / "sample_logistics.csv"
 
 if use_sample:
     st.session_state["steps"], st.session_state["events"], \
         st.session_state["analysis"], st.session_state["tasks"] = run_pipeline(
             str(SAMPLE_SOP), str(SAMPLE_CSV), str(SAMPLE_PAYROLL),
-            str(SAMPLE_PNL), str(SAMPLE_LOGISTICS))
+            str(SAMPLE_PNL), str(SAMPLE_LOGISTICS), seed_demo=True)
     st.session_state["sop_less"] = False
 elif run and csv_file:
-    sop_path = _save_upload(sop_file) if sop_file else None
-    st.session_state["steps"], st.session_state["events"], \
-        st.session_state["analysis"], st.session_state["tasks"] = run_pipeline(
-            sop_path, _save_upload(csv_file),
-            _save_upload(payroll_file) if payroll_file else None,
-            _save_upload(pnl_file) if pnl_file else None,
-            _save_upload(logistics_file) if logistics_file else None)
-    st.session_state["sop_less"] = sop_path is None
+    sdir = _session_dir()
+    tmp_paths = []
+    try:
+        sop_path = None
+        if sop_file:
+            sop_path = _save_upload(sop_file, sdir)
+            tmp_paths.append(sop_path)
+        bank_path = _save_upload(csv_file, sdir)
+        tmp_paths.append(bank_path)
+        payroll_path = pnl_path = logistics_path = None
+        for up, slot in [(payroll_file, "payroll"), (pnl_file, "pnl"),
+                         (logistics_file, "logistics")]:
+            if up:
+                p = _save_upload(up, sdir)
+                tmp_paths.append(p)
+                if slot == "payroll":
+                    payroll_path = p
+                elif slot == "pnl":
+                    pnl_path = p
+                else:
+                    logistics_path = p
+        st.session_state["steps"], st.session_state["events"], \
+            st.session_state["analysis"], st.session_state["tasks"] = run_pipeline(
+                sop_path, bank_path, payroll_path, pnl_path, logistics_path,
+                dismissed=_dismissed_vendors())
+        st.session_state["sop_less"] = sop_path is None
+    finally:
+        for p in tmp_paths:
+            try:
+                Path(p).unlink(missing_ok=True)
+            except OSError:
+                pass
 elif run and not csv_file:
     st.warning("Upload a bank CSV first — that's the minimum input.")
 
@@ -133,12 +271,38 @@ tab_find, tab_map, tab_tasks, tab_agent, tab_approvals, tab_settings = st.tabs(
 with tab_find:
     leak = analysis["unmapped_leakage"]
     st.subheader(f"Unmapped leakage — ${s['monthly_leakage']:,.2f}/mo")
+    st.caption("Cadence inference can flag annual renewals or seasonal "
+               "vendors. If a charge is legitimate, mark it expected — "
+               "it stays dismissed for this session.")
     if leak:
-        st.dataframe(pd.DataFrame([{
+        _dataframe(pd.DataFrame([{
             "Vendor": f["vendor_display"], "Cadence": f["cadence"],
             "Txns": f["transactions"], "$/mo": f["monthly_cost"],
             "$/yr": f["annualized"], "Category": f["category"],
-        } for f in leak]), use_container_width=True)
+        } for f in leak]))
+        _dismiss_choice = st.selectbox(
+            "Mark a vendor as expected (dismiss the finding)",
+            ["—"] + [f["vendor_display"] for f in leak],
+            key="dismiss_vendor")
+        if _dismiss_choice != "—" and st.button("Dismiss",
+                                               key="dismiss_btn"):
+            import json as _djson
+            _match = next(f for f in leak
+                          if f["vendor_display"] == _dismiss_choice)
+            _dismissed = _dismissed_vendors()
+            _dismissed.add(_match["vendor_payee"])
+            (_session_dir() / "dismissed.json").write_text(
+                _djson.dumps(sorted(_dismissed)))
+            # Remove from the live findings and their tasks.
+            analysis["unmapped_leakage"] = [
+                f for f in leak
+                if f["vendor_payee"] not in _dismissed]
+            st.session_state["analysis"] = analysis
+            st.session_state["tasks"] = [
+                t for t in st.session_state.get("tasks", [])
+                if not (t["type"] == "unmapped_leakage" and
+                        _match["vendor_display"] in t["title"])]
+            st.rerun()
     else:
         st.success("Every recurring vendor maps to an SOP step.")
 
@@ -158,13 +322,13 @@ with tab_find:
         st.subheader("Payroll reconciliation")
         pg = analysis.get("payroll_gaps", [])
         if pg:
-            st.dataframe(pd.DataFrame([{
+            _dataframe(pd.DataFrame([{
                 "Direction": "Record w/o payment"
                 if f["direction"] == "missing_payment"
                 else "Payment w/o record",
                 "Payee": f["payee"], "Amount": f["amount"],
                 "Date": f["date"],
-            } for f in pg]), use_container_width=True)
+            } for f in pg]))
         else:
             st.success("Every payroll record matches a bank payment.")
 
@@ -172,13 +336,18 @@ with tab_find:
         st.subheader("P&L variance — books vs. bank")
         pv = analysis.get("pnl_variance", [])
         if pv:
-            st.dataframe(pd.DataFrame([{
+            _dataframe(pd.DataFrame([{
                 "Account": f["account"], "Period": f["period"],
                 "Books": f["pnl_total"], "Bank": f["bank_total"],
                 "Variance %": f["variance_pct"],
-            } for f in pv]), use_container_width=True)
+            } for f in pv]))
         else:
             st.success("P&L totals match bank activity within tolerance.")
+
+
+def _dot_escape(text: str) -> str:
+    """Escape a label for DOT: quotes/backslashes break the graph."""
+    return str(text).replace(chr(92), chr(92)*2).replace('"', chr(92)+'"')[:28]
 
 
 def _reality_map_dot() -> str:
@@ -188,24 +357,25 @@ def _reality_map_dot() -> str:
              '  node [shape=box, style="rounded,filled", fontsize=10];']
     matched_vendors = set()
     for stp in steps:
-        label = f"{stp['step_id']}\n{(stp.get('expected_vendor') or '')[:24]}"
+        label = (_dot_escape(stp["step_id"]) + "\\n" +
+                 _dot_escape((stp.get("expected_vendor") or "")[:24]))
         lines.append(f'  "{label}" [fillcolor=lightblue1];')
         mv = _match_step_to_vendors(stp, events)
         for v in mv["vendor_payee"].unique():
             matched_vendors.add(v)
-            vlabel = f"{v[:28]}"
+            vlabel = _dot_escape(v)
             lines.append(f'  "{vlabel}" [fillcolor=palegreen];')
             lines.append(f'  "{label}" -> "{vlabel}";')
     for v, g in events.groupby("vendor_payee"):
         if v in matched_vendors or g["frequency"].iloc[0] == "ad-hoc":
             continue
-        vlabel = f"{v[:28]}"
+            vlabel = _dot_escape(v)
         cost = g["amount"].median() * (30.0 / max(
             float(g["timestamp"].sort_values().drop_duplicates()
                   .diff().dt.days.median()), 1))
         lines.append(
             f'  "{vlabel}" [fillcolor=indianred1, fontcolor=white, '
-            f'label="{v[:22]}\\n~${cost:,.0f}/mo UNMAPPED"];')
+            f'label="{_dot_escape(v[:22])}\\n~${cost:,.0f}/mo UNMAPPED"];')
     lines.append("}")
     return "\n".join(lines)
 
@@ -215,7 +385,7 @@ with tab_map:
     st.caption("Blue = documented SOP steps · Green = matched spend · "
                "Red = recurring spend with no SOP behind it")
     if steps:
-        st.graphviz_chart(_reality_map_dot(), use_container_width=True)
+        _graphviz(_reality_map_dot())
     else:
         st.info("Upload an SOP to render the step-to-spend map.")
 
@@ -223,7 +393,13 @@ with tab_tasks:
     st.subheader("Task queue — exceptions routed to owners")
     st.caption("Every finding becomes a task for the role that owns it. "
                "This is what replaces the status meeting.")
-    tasks = st.session_state.get("tasks", [])
+    import json as _tjson
+    _tasks_path = _session_dir() / "tasks.json"
+    tasks = st.session_state.get("tasks")
+    if tasks is None and _tasks_path.exists():
+        tasks = _tjson.loads(_tasks_path.read_text())
+        st.session_state["tasks"] = tasks
+    tasks = tasks or []
     if not tasks:
         st.success("Queue is clear — no open exceptions.")
     else:
@@ -235,7 +411,7 @@ with tab_tasks:
             "First action": t["first_action"], "Status": t["status"],
         } for t in tasks])
         edited = st.data_editor(
-            df, use_container_width=True, hide_index=True,
+            df, hide_index=True,
             column_config={
                 "Status": st.column_config.SelectboxColumn(
                     "Status", options=list(STATUSES), required=True),
@@ -243,12 +419,17 @@ with tab_tasks:
             disabled=["ID", "Priority", "Task", "Owner", "First action"],
             key="task_editor",
         )
-        # Persist status changes back to session state.
+        # Persist status changes to the session dir — survives refresh.
+        changed = False
         for _, row in edited.iterrows():
             for t in tasks:
-                if t["task_id"] == row["ID"]:
+                if t["task_id"] == row["ID"] and \
+                        t["status"] != row["Status"]:
                     t["status"] = row["Status"]
-        st.session_state["tasks"] = tasks
+                    changed = True
+        if changed or not _tasks_path.exists():
+            st.session_state["tasks"] = tasks
+            _tasks_path.write_text(_tjson.dumps(tasks, indent=2))
 
 with tab_agent:
     st.subheader("Deployable agent workflow")
@@ -274,64 +455,69 @@ with tab_agent:
 # ---------------------------------------------------------------------------
 # Approvals — the owner experience: pending decisions as taps
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Approvals — the owner experience: pending decisions as taps.
+# Session-scoped: each visitor only ever sees their own approvals.
+# ---------------------------------------------------------------------------
 with tab_approvals:
     st.subheader("Pending approvals")
     st.caption("Payments the agent held for a human. Approve or reject — "
                "the workflow completes itself.")
     import json as _json
-    import importlib.util as _ilu
 
-    _pending_dir = STATE_DIR / "approvals" / "pending"
-    _pending = sorted(_pending_dir.glob("*.json")) if _pending_dir.exists() else []
+    _appr_dir = _session_dir() / "approvals"
+    _pending_dir = _appr_dir / "pending"
+    _pending = sorted(_pending_dir.glob("*.json")) \
+        if _pending_dir.exists() else []
     if not _pending:
         st.success("Nothing waiting on you. The agent handled everything "
                    "under your thresholds.")
     else:
-        _wf_path = STATE_DIR / "workflow.py"
         for p in _pending:
-            req = _json.loads(p.read_text())
+            req = _json.loads(p.read_text())  # parsed once per row
             c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
             c1.write(f"**{req['vendor_name']}** — ${req['amount']:,.2f}")
             c2.write(f"{req.get('category', '')} · "
                      f"threshold ${req.get('threshold', 0):,.0f}")
             if c3.button("Approve", key=f"ap_{p.stem}"):
-                spec = _ilu.spec_from_file_location("sop_workflow",
-                                                    str(_wf_path))
-                wf = _ilu.module_from_spec(spec)
-                spec.loader.exec_module(wf)
-                wf.resolve_approval(str(STATE_DIR / "approvals"), p.stem,
-                                    "approved", decided_by="app owner")
+                try:
+                    _load_workflow_module().resolve_approval(
+                        str(_appr_dir), p.stem, "approved",
+                        decided_by="app owner")
+                except (FileNotFoundError, ValueError) as e:
+                    st.error(str(e))
                 st.rerun()
             if c4.button("Reject", key=f"rj_{p.stem}"):
-                spec = _ilu.spec_from_file_location("sop_workflow",
-                                                    str(_wf_path))
-                wf = _ilu.module_from_spec(spec)
-                spec.loader.exec_module(wf)
-                wf.resolve_approval(str(STATE_DIR / "approvals"), p.stem,
-                                    "rejected", decided_by="app owner")
+                try:
+                    _load_workflow_module().resolve_approval(
+                        str(_appr_dir), p.stem, "rejected",
+                        decided_by="app owner")
+                except (FileNotFoundError, ValueError) as e:
+                    st.error(str(e))
                 st.rerun()
 
-    _decided_dir = STATE_DIR / "approvals" / "decided"
+    _decided_dir = _appr_dir / "decided"
     _decided = sorted(_decided_dir.glob("*.json"),
                       reverse=True) if _decided_dir.exists() else []
     if _decided:
         st.subheader("Decided")
-        st.dataframe(pd.DataFrame([{
-            "Vendor": _json.loads(p.read_text())["vendor_name"],
-            "Amount": _json.loads(p.read_text())["amount"],
-            "Decision": _json.loads(p.read_text())["status"],
-            "By": _json.loads(p.read_text())["decided_by"],
-        } for p in _decided[:20]]), use_container_width=True)
+        _rows = []
+        for p in _decided[:20]:
+            r = _json.loads(p.read_text())  # parsed once per row
+            _rows.append({"Vendor": r["vendor_name"], "Amount": r["amount"],
+                          "Decision": r["status"], "By": r["decided_by"]})
+        _dataframe(_rows)
 
 # ---------------------------------------------------------------------------
-# Settings — the customizable layer, no code
+# Settings — the customizable layer, no code. Session-scoped.
 # ---------------------------------------------------------------------------
 with tab_settings:
     st.subheader("Business settings")
     st.caption("Change the rules here — thresholds, vendors, your team. "
                "The audit, the tasks, and the agent all follow on the "
-               "next run. No code changes.")
-    cfg = load_config()
+               "next run. No code changes. Changes apply to this session "
+               "only.")
+    cfg = load_config(_session_config_path())
 
     cfg["business_name"] = st.text_input("Business name",
                                         cfg.get("business_name", ""))
@@ -374,12 +560,11 @@ with tab_settings:
                                      key=f"role_{role}")
     cfg["roles"] = _roles
 
-    cfg["digest_cadence"] = st.selectbox("Digest cadence",
-                                        ["weekly", "daily"],
-                                        index=0 if cfg.get("digest_cadence",
-                                                           "weekly") == "weekly"
-                                        else 1)
+    cfg["digest_cadence"] = st.selectbox(
+        "Digest cadence", ["weekly", "daily"],
+        index=0 if cfg.get("digest_cadence", "weekly") == "weekly" else 1)
 
     if st.button("Save settings", type="primary"):
-        save_config(cfg)
-        st.success("Saved. The next run follows the new rules.")
+        save_config(cfg, _session_config_path())
+        st.success("Saved for this session. The next run follows the new "
+                   "rules.")
