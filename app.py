@@ -619,9 +619,12 @@ with tab_settings:
         index=0 if cfg.get("digest_cadence", "weekly") == "weekly" else 1)
 
     if st.button("Save settings", type="primary"):
-        save_config(cfg, _session_config_path())
-        st.success("Saved for this session. The next run follows the new "
-                   "rules.")
+        try:
+            save_config(cfg, _session_config_path())
+            st.success("Saved for this session. The next run follows the new "
+                       "rules.")
+        except ValueError as e:
+            st.error(f"Couldn't save settings: {e}")
 
     st.markdown("**Carry your settings** — a refresh starts a new session, "
                 "so export the config to keep it (one file per client).")
@@ -632,7 +635,10 @@ with tab_settings:
                                key="cfg_import")
     if _cfg_up is not None and st.button("Import", key="cfg_import_btn"):
         import yaml
+        from config import MAX_CONFIG_BYTES
         try:
+            if _cfg_up.size > MAX_CONFIG_BYTES:
+                raise ValueError(f"file exceeds {MAX_CONFIG_BYTES} bytes")
             _incoming = yaml.safe_load(_cfg_up.read()) or {}
             _known = {"business_name", "approval_threshold",
                       "category_thresholds", "auto_pay_vendors",

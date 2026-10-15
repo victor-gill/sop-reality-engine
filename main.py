@@ -49,6 +49,12 @@ def main():
     ap.add_argument("--report", default=None,
                     help="Optional path to write an editable client report "
                          "(Markdown, findings pre-filled, judgment left blank)")
+    ap.add_argument("--report-format", choices=["md", "docx"], default="md",
+                    help="Client report format: Markdown (edit) or Word "
+                         "(deliver)")
+    ap.add_argument("--report-final", action="store_true",
+                    help="Refuse to write the report while any EDIT "
+                         "markers remain (stamps DRAFT otherwise)")
     args = ap.parse_args()
 
     bank_path = args.bank or args.csv
@@ -86,15 +92,26 @@ def main():
         print(f"\nFindings written to {args.json}")
 
     if args.report:
-        from client_report import build_report
+        from client_report import build_report, count_edits, to_docx
         cfg = _load_config()
         tasks = _gen_tasks(analysis, steps)
         report_md = build_report(analysis, tasks,
-                                 cfg.get("business_name", "Client Business"))
-        with open(args.report, "w", encoding="utf-8") as f:
-            f.write(report_md)
+                                 cfg.get("business_name", "Client Business"),
+                                 final=args.report_final)
+        n_edits = count_edits(report_md)
+        if args.report_final and n_edits:
+            ap.error(f"refusing: {n_edits} EDIT markers remain — "
+                     "complete the auditor pass first")
+        out = args.report
+        if args.report_format == "docx":
+            if not out.lower().endswith(".docx"):
+                out += ".docx"
+            to_docx(report_md, out)
+        else:
+            with open(out, "w", encoding="utf-8") as f:
+                f.write(report_md)
         n = sum(len(analysis[k]) for k in analysis if k != "summary")
-        print(f"Client report drafted at {args.report} ({n} findings — "
+        print(f"Client report drafted at {out} ({n} findings — "
               f"edit the marked lines).")
 
 

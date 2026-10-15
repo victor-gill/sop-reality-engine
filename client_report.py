@@ -28,6 +28,38 @@ def _load(path):
     return json.loads(Path(path).read_text()) if path else None
 
 
+def _evidence(finding: dict) -> str:
+    """One verifiable line per finding type — the client should be able
+    to check it in 30 seconds."""
+    t = finding.get("type")
+    if t == "unmapped_leakage":
+        return (f"Evidence: {finding['transactions']} transactions, "
+                f"{finding['first_date']} → {finding['last_date']}, "
+                f"amounts {_money(finding['min_amount'])}–"
+                f"{_money(finding['max_amount'])}, cadence regularity: "
+                f"{finding['regularity']}.")
+    if t == "threshold_review":
+        return (f"Evidence: {_money(finding['amount'])} to "
+                f"'{finding['vendor']}' on {finding['date']} "
+                f"(threshold {_money(finding['threshold'])}).")
+    if t == "payroll_gap":
+        return (f"Evidence: {_money(finding['amount'])} — "
+                f"'{finding['payee']}' on {finding['date']}.")
+    if t == "pnl_variance":
+        return (f"Evidence: books {_money(finding['pnl_total'])} vs. bank "
+                f"{_money(finding['bank_total'])} for "
+                f"'{finding['account']}' ({finding['period']}).")
+    if t == "cycle_gap":
+        return (f"Evidence: expected every {finding['expected_every_days']} "
+                f"days, actually every "
+                f"{finding['actual_every_days']:.0f} days.")
+    if t == "sop_deviation":
+        return (f"Evidence: {finding['step_id']} expects "
+                f"~{_money(finding['expected_amount'])}; no matching "
+                f"transactions in the data window.")
+    return ""
+
+
 def _task_for(tasks, finding) -> dict | None:
     """Best-effort match of a task to its finding for the pre-filled action."""
     if not tasks:
@@ -53,8 +85,11 @@ def _finding_block(finding, tasks, num) -> list[str]:
         "",
         f"**What the engine found:** {finding.get('detail', '')}",
         "",
-        f"**Suggested owner:** {owner}",
     ]
+    ev = _evidence(finding)
+    if ev:
+        lines += [ev, ""]
+    lines.append(f"**Suggested owner:** {owner}")
     if action:
         lines.append(f"**Suggested first step:** {action}")
     lines += [
@@ -72,22 +107,37 @@ def _finding_block(finding, tasks, num) -> list[str]:
     return lines
 
 
+def count_edits(markdown: str) -> int:
+    """Unfilled EDIT markers remaining in the report."""
+    return markdown.count(EDIT.strip())
+
+
 def build_report(findings: dict, tasks: list | None,
-                 business: str) -> str:
+                 business: str, final: bool = False) -> str:
     s = findings["summary"]
     today = date.today().isoformat()
     L = [
         f"# Operational Audit Report — {business}",
         "",
         f"**Date:** {today}",
-        f"**Prepared by:** {EDIT}your name / firm",
-        f"**Documents reviewed:** {EDIT}list the source files and their "
-        "periods, e.g. bank export Jan–Jun 2026, payroll ledger, P&L",
+        "**Prepared by:**",
+        f"{EDIT}your name / firm",
+        "**Documents reviewed:**",
+        f"{EDIT}list the source files and their periods, e.g. bank export "
+        "Jan–Jun 2026, payroll ledger, P&L",
         f"**Method:** automated reconciliation of documented process "
         f"against {s['events_analyzed']} transactions across "
         f"{s['vendors_seen']} vendors, followed by manual auditor review "
         f"of every finding.",
         "",
+    ]
+    if not final:
+        L += [
+            "**Status:** DRAFT — not for client delivery. The auditor has "
+            "not yet completed every EDIT prompt in this document.",
+            "",
+        ]
+    L += [
         "## Executive summary",
         "",
         f"{EDIT}one paragraph: the headline numbers below, in plain "
@@ -160,6 +210,56 @@ def build_report(findings: dict, tasks: list | None,
     return "\n".join(L)
 
 
+def _rich(paragraph, text: str):
+    """Add runs to a paragraph, honoring **bold** spans."""
+    import re
+    for i, part in enumerate(re.split(r"\*\*(.+?)\*\*", text)):
+        if not part:
+            continue
+        run = paragraph.add_run(part)
+        if i % 2 == 1:
+            run.bold = True
+
+
+def to_docx(markdown: str, path: str):
+    """Minimal markdown → .docx so the deliverable looks finished.
+    Handles headings, bold, bullets, checkboxes, blockquotes, and rules."""
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.size = Pt(11)
+
+    for raw in markdown.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("### "):
+            doc.add_heading(line[4:], level=3)
+        elif line.startswith("## "):
+            doc.add_heading(line[3:], level=2)
+        elif line.startswith("# "):
+            doc.add_heading(line[2:], level=1)
+        elif line == "---":
+            doc.add_paragraph().add_run().add_break()
+        elif line.startswith(("- [ ]", "- [x]")):
+            p = doc.add_paragraph(style="List Bullet")
+            _rich(p, line[5:].replace("&nbsp;", " "))
+        elif line.startswith("- "):
+            p = doc.add_paragraph(style="List Bullet")
+            _rich(p, line[2:])
+        elif line.startswith("> "):
+            p = doc.add_paragraph(style="Intense Quote")
+            run = p.add_run(line[2:])
+            run.italic = True
+            run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+        else:
+            p = doc.add_paragraph()
+            _rich(p, line.replace("&nbsp;", " "))
+    doc.save(path)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Generate an editable client report from findings JSON")
@@ -170,6 +270,10 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--business", default=None,
                     help="overrides the business name")
+    ap.add_argument("--final", action="store_true",
+                    help="refuse to write while any EDIT markers remain")
+    ap.add_argument("--format", choices=["md", "docx"], default="md",
+                    help="output format: Markdown (edit) or Word (deliver)")
     args = ap.parse_args()
 
     findings = _load(args.findings)
@@ -178,10 +282,22 @@ def main():
     if not business and args.config:
         from config import load_config
         business = load_config(args.config).get("business_name")
-    report = build_report(findings, tasks, business or "Client Business")
-    Path(args.out).write_text(report, encoding="utf-8")
+    report = build_report(findings, tasks, business or "Client Business",
+                          final=args.final)
+    n_edits = count_edits(report)
+    if args.final and n_edits:
+        ap.error(f"refusing: {n_edits} EDIT markers remain — "
+                 "complete the auditor pass first")
+    if args.format == "docx":
+        out = args.out
+        if not out.lower().endswith(".docx"):
+            out += ".docx"
+        to_docx(report, out)
+    else:
+        out = args.out
+        Path(out).write_text(report, encoding="utf-8")
     n = sum(len(findings[k]) for k in findings if k != "summary")
-    print(f"[client_report] {n} findings written to {args.out} — "
+    print(f"[client_report] {n} findings written to {out} — "
           f"edit the {EDIT.strip()} lines.")
 
 

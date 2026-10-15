@@ -56,16 +56,34 @@ def find_unmapped_leakage(steps: list[dict],
         median_amount = float(group["amount"].median())
         dates = group["timestamp"].sort_values().drop_duplicates()
         median_gap = float(dates.diff().dt.days.median()) if len(dates) >= 2 else 30.0
-        monthly_cost = median_amount * (30.0 / median_gap) if median_gap else median_amount
+        monthly_raw = median_amount * (30.0 / median_gap) if median_gap else median_amount
+        monthly_cost = round(monthly_raw, 2)
+        # Annualized derives from the ROUNDED monthly so the two always
+        # reconcile: monthly x 12 == annualized, to the cent.
+        annualized = round(monthly_cost * 12, 2)
+        # Evidence the client can verify in 30 seconds, plus a regularity
+        # cue for triage (high = metronome, low = likely false alarm).
+        gaps = dates.diff().dt.days.dropna()
+        if len(gaps) >= 2 and gaps.mean():
+            cv = gaps.std() / gaps.mean()
+            regularity = ("high" if cv < 0.25 else
+                          "medium" if cv < 0.6 else "low")
+        else:
+            regularity = "n/a"
         findings.append({
             "type": "unmapped_leakage",
             "vendor": vendor,
             "vendor_display": group["vendor_raw"].iloc[0],
             "cadence": cadence,
             "transactions": len(group),
-            "monthly_cost": round(monthly_cost, 2),
-            "annualized": round(monthly_cost * 12, 2),
+            "monthly_cost": monthly_cost,
+            "annualized": annualized,
             "category": group["category"].iloc[0],
+            "first_date": dates.iloc[0].date().isoformat(),
+            "last_date": dates.iloc[-1].date().isoformat(),
+            "min_amount": round(float(group["amount"].min()), 2),
+            "max_amount": round(float(group["amount"].max()), 2),
+            "regularity": regularity,
             "detail": (f"Recurring {cadence} spend with '{group['vendor_raw'].iloc[0]}' "
                        f"has no matching SOP step — undocumented outflow."),
         })
@@ -161,6 +179,7 @@ def analyze(steps: list[dict], events: pd.DataFrame,
                     if payroll is not None and not payroll.empty else [])
     pnl_variance = (find_pnl_variance(pnl, bank_only)
                     if pnl is not None and not pnl.empty else [])
+    monthly = round(sum(f["monthly_cost"] for f in leakage), 2)
     return {
         "unmapped_leakage": leakage,
         "sop_deviations": find_sop_deviations(steps, events),
@@ -172,9 +191,10 @@ def analyze(steps: list[dict], events: pd.DataFrame,
             "steps_parsed": len(steps),
             "events_analyzed": len(events),
             "vendors_seen": int(events["vendor_payee"].nunique()),
-            "monthly_leakage": round(sum(f["monthly_cost"] for f in leakage), 2),
-            "annualized_leakage": round(
-                sum(f["annualized"] for f in leakage), 2),
+            # Annualized derives from the rounded monthly total so the
+            # headline always reconciles: monthly x 12 == annualized.
+            "monthly_leakage": monthly,
+            "annualized_leakage": round(monthly * 12, 2),
             "sources": sorted(events["source"].unique().tolist())
             if "source" in events.columns else ["bank"],
             "payroll_provided": payroll is not None and not payroll.empty,
