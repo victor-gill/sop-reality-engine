@@ -26,12 +26,28 @@ def _py_str(value) -> str:
     return repr(str(value))
 
 
+def _safe_doc(text: str, limit: int = 60) -> str:
+    """Make arbitrary SOP text safe for interpolation into generated
+    Python (docstrings). A crafted SOP must never break out of the
+    string context: strip triple quotes, backslashes, and newlines."""
+    t = re.sub(r"\s+", " ", str(text))[:limit]
+    return t.replace("\\", "/").replace('"""', "'''").replace('"', "'")
+
+
+def _safe_threshold(value) -> float:
+    """Coerce an approval threshold to float; never interpolate raw."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 5000.0
+
+
 def generate_workflow(steps: list[dict], out_path: str = "workflow.py") -> str:
     """Generate a runnable LangGraph workflow from SOP steps."""
     financial_steps = [s for s in steps if s.get("expected_amount") is not None]
-    thresholds = [s["approval_threshold"] for s in steps
+    thresholds = [_safe_threshold(s["approval_threshold"]) for s in steps
                   if s.get("approval_threshold")]
-    approval_threshold = max(thresholds) if thresholds else None
+    approval_threshold = max(thresholds) if thresholds else 5000.0
     vendors = sorted({s.get("expected_vendor", "")
                       for s in steps if s.get("expected_vendor")})
 
@@ -41,7 +57,7 @@ def generate_workflow(steps: list[dict], out_path: str = "workflow.py") -> str:
         cn = _class_name(s["step_id"])
         schema_blocks.append(f'''\
 class {cn}Schema(BaseModel):
-    """Validates '{s.get('action', '')[:60]}' ({s['step_id']})."""
+    """Validates '{_safe_doc(s.get('action', ''))}' ({_safe_doc(s['step_id'], 20)})."""
     vendor_name: str = Field(..., description="Counterparty name")
     amount: float = Field(..., gt=0, description="Transaction amount")
     requires_approval: bool = Field(
@@ -84,7 +100,7 @@ from pydantic import BaseModel, Field, field_validator
 # re-reads business_config.yaml (or $SOPRE_CONFIG), so the owner can
 # change thresholds, vendors, and rules without regenerating.
 _BAKED_RULES = {{
-    "approval_threshold": {approval_threshold if approval_threshold else 5000},
+    "approval_threshold": {approval_threshold},
     "category_thresholds": {{}},
     "auto_pay_vendors": {vendors!r},
     "always_review_vendors": [],

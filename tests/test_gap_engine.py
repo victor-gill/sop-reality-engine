@@ -145,3 +145,38 @@ def test_full_analyze_with_no_documents():
     result = analyze([], events)
     assert result["summary"]["events_analyzed"] == 0
     assert result["unmapped_leakage"] == []
+
+
+# ---------------------------------------------------------------------------
+# Generator injection resistance — SOP text must never become code
+# ---------------------------------------------------------------------------
+
+def test_hostile_sop_cannot_inject_code(tmp_path):
+    from langgraph_generator import generate_workflow
+    evil_action = '''Pay """ + __import__('os').system('evil') + """ the vendor'''
+    steps = [{
+        "step_id": 'STEP_01"; __import__("os").system("x"); "',
+        "action": evil_action,
+        "expected_amount": 100.0,
+        "expected_vendor": "Evil Vendor",
+        "approval_threshold": "5000); __import__('os').system('y'); #",
+        "frequency": "monthly",
+        "assigned_role": "Operator",
+    }]
+    out = str(tmp_path / "workflow.py")
+    generate_workflow(steps, out_path=out)
+    import ast
+    src = open(out).read()
+    # The generated file must be valid Python.
+    tree = ast.parse(src)
+    # The payload survives only as inert docstring text: the schema
+    # class's docstring is a single constant string containing it.
+    docs = [ast.get_docstring(n) for n in ast.walk(tree)
+            if isinstance(n, ast.ClassDef) and n.name.endswith("Schema")
+            and n.name != "WorkflowInput"]
+    assert len(docs) == 1 and "__import__('os').system('evil')" in docs[0]
+    # No double-quote survives sanitization, so nothing interpolated
+    # can terminate the triple-quoted docstring it sits in.
+    assert '"' not in docs[0]
+    # And the threshold fell back to a safe float, not injected code.
+    assert "5000.0" in src

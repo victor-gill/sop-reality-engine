@@ -59,6 +59,39 @@ SAMPLE_LOGISTICS = Path(__file__).parent / "sample_data" / "sample_logistics.csv
 # Every visitor gets their own working directory: uploads, generated
 # workflow, approvals, and settings never touch another session or the
 # shared ./state directory (which the local runner owns).
+@st.cache_resource
+def _sweep_old_sessions():
+    """Delete session dirs older than 4h. Streamlit has no reliable
+    session-end hook, so stale vendor names/amounts would otherwise
+    accumulate in /tmp forever."""
+    import shutil
+    import time
+    tmp = Path(tempfile.gettempdir())
+    now = time.time()
+    for d in tmp.glob("sopre_session_*"):
+        try:
+            if now - d.stat().st_mtime > 4 * 3600:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
+    return True
+
+
+_sweep_old_sessions()
+
+
+@st.cache_resource
+def _llm_budget():
+    """Process-wide LLM spend cap. Per-session counters reset on refresh;
+    this one can't be bypassed that way. (On multi-replica hosting each
+    replica gets its own budget — still strictly better.)"""
+    import threading
+    return {"used": 0, "lock": threading.Lock()}
+
+
+MAX_LLM_PARSES_GLOBAL = 20
+
+
 def _session_dir() -> Path:
     if "session_dir" not in st.session_state:
         d = Path(tempfile.mkdtemp(prefix="sopre_session_"))
@@ -82,28 +115,44 @@ def _dismissed_vendors() -> set:
 
 
 def _save_upload(uploaded, session_dir: Path) -> str:
-    """Write an upload into the session dir. Caller must delete it."""
+    """Write an upload into the session dir. Caller must delete it.
+
+    If the write itself fails, the partial file is removed here so a
+    failed upload can never leak into tmp_paths-less limbo.
+    """
     suffix = Path(uploaded.name).suffix
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix,
                                       dir=str(session_dir))
-    tmp.write(uploaded.getbuffer())
-    tmp.close()
+    try:
+        tmp.write(uploaded.getbuffer())
+        tmp.close()
+    except Exception:
+        try:
+            tmp.close()
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
+        raise
     return tmp.name
-
-
-MAX_LLM_PARSES_PER_SESSION = 3
 
 
 def run_pipeline(sop_path, csv_path, payroll_path=None, pnl_path=None,
                  logistics_path=None, dismissed=None, seed_demo=False):
+    import hashlib
     import pandas as pd
     import sop_parser
     sdir = _session_dir()
-    allow_llm = st.session_state.get("llm_parses", 0) < MAX_LLM_PARSES_PER_SESSION
+    # Touch the session dir so the startup sweep doesn't reap active sessions.
+    sdir.touch(exist_ok=True)
+    budget = _llm_budget()
+    with budget["lock"]:
+        allow_llm = budget["used"] < MAX_LLM_PARSES_GLOBAL
     steps = parse_sop(sop_path, allow_llm=allow_llm) if sop_path else []
     if sop_parser.last_used_llm:
-        st.session_state["llm_parses"] = \
-            st.session_state.get("llm_parses", 0) + 1
+        with budget["lock"]:
+            budget["used"] += 1
+            _llm_used_now = budget["used"]
+        st.caption(f"AI parsing used ({_llm_used_now}/{MAX_LLM_PARSES_GLOBAL} "
+                   f"this session window).")
     frames = [normalize_ledger(csv_path)]
     payroll = pd.DataFrame()
     if payroll_path:
@@ -127,14 +176,12 @@ def run_pipeline(sop_path, csv_path, payroll_path=None, pnl_path=None,
         wf_path = sdir / "workflow.py"
         generate_workflow(steps, out_path=str(wf_path))
         st.session_state["workflow_path"] = str(wf_path)
+        # Hash at generation time; verified before any execution.
+        st.session_state["workflow_hash"] = hashlib.sha256(
+            wf_path.read_bytes()).hexdigest()
         if seed_demo:
             # Seed one demo approval so the loop is visible end to end.
-            import os
-            os.environ["SOPRE_CONFIG"] = _session_config_path()
-            spec = importlib.util.spec_from_file_location(
-                "sop_workflow_demo", str(wf_path))
-            wf = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(wf)
+            wf = _load_workflow_module()
             wf.run_transaction("Acme Industrial Supply", 6800.00,
                                "demo-seed-1", str(sdir / "approvals"),
                                memo="seeded demo approval")
@@ -142,16 +189,23 @@ def run_pipeline(sop_path, csv_path, payroll_path=None, pnl_path=None,
 
 
 def _load_workflow_module():
-    """Import the session's generated workflow after verifying provenance.
+    """Import the session's generated workflow after verifying integrity.
 
-    Refuses to execute the file unless it carries the generator's marker
-    header — the path must never be reachable from user input.
+    Three checks before executing: the path is inside this session's dir
+    (never reachable from user input), the content hash matches what was
+    generated moments ago in this session, and the file carries the
+    generator's marker header.
     """
+    import hashlib
     import importlib.util
     wf_path = Path(st.session_state.get("workflow_path", ""))
     expected_dir = _session_dir().resolve()
     if not wf_path.exists() or expected_dir not in wf_path.resolve().parents:
         raise FileNotFoundError("no generated workflow for this session")
+    digest = hashlib.sha256(wf_path.read_bytes()).hexdigest()
+    if digest != st.session_state.get("workflow_hash"):
+        raise ValueError("workflow file changed since generation — "
+                         "refusing to execute")
     head = wf_path.read_text(encoding="utf-8")[:500]
     if "Auto-generated agent workflow" not in head:
         raise ValueError("workflow file failed provenance check")
@@ -453,60 +507,60 @@ with tab_agent:
                            file_name="workflow.py")
 
 # ---------------------------------------------------------------------------
-# Approvals — the owner experience: pending decisions as taps
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
 # Approvals — the owner experience: pending decisions as taps.
-# Session-scoped: each visitor only ever sees their own approvals.
 # ---------------------------------------------------------------------------
 with tab_approvals:
     st.subheader("Pending approvals")
     st.caption("Payments the agent held for a human. Approve or reject — "
-               "the workflow completes itself.")
-    import json as _json
+               "the workflow completes itself. Decisions are handled by a "
+               "fixed module, never by executing generated code.")
+    from approvals import (pending_requests, decided_requests,
+                           resolve_approval)
 
-    _appr_dir = _session_dir() / "approvals"
-    _pending_dir = _appr_dir / "pending"
-    _pending = sorted(_pending_dir.glob("*.json")) \
-        if _pending_dir.exists() else []
-    if not _pending:
-        st.success("Nothing waiting on you. The agent handled everything "
-                   "under your thresholds.")
-    else:
-        for p in _pending:
-            req = _json.loads(p.read_text())  # parsed once per row
+    def _approval_rows(appr_dir: Path, label: str):
+        """Render one approval source (session or local runner)."""
+        pending = pending_requests(appr_dir)
+        if label:
+            st.markdown(f"**{label}**")
+        if not pending:
+            st.success("Nothing waiting on you here.")
+            return
+        for req in pending:
             c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
             c1.write(f"**{req['vendor_name']}** — ${req['amount']:,.2f}")
             c2.write(f"{req.get('category', '')} · "
                      f"threshold ${req.get('threshold', 0):,.0f}")
-            if c3.button("Approve", key=f"ap_{p.stem}"):
+            key = f"{label}_{req['txn_id']}" if label else req['txn_id']
+            if c3.button("Approve", key=f"ap_{key}"):
                 try:
-                    _load_workflow_module().resolve_approval(
-                        str(_appr_dir), p.stem, "approved",
-                        decided_by="app owner")
+                    resolve_approval(appr_dir, req["txn_id"], "approved",
+                                     decided_by="app owner")
                 except (FileNotFoundError, ValueError) as e:
                     st.error(str(e))
                 st.rerun()
-            if c4.button("Reject", key=f"rj_{p.stem}"):
+            if c4.button("Reject", key=f"rj_{key}"):
                 try:
-                    _load_workflow_module().resolve_approval(
-                        str(_appr_dir), p.stem, "rejected",
-                        decided_by="app owner")
+                    resolve_approval(appr_dir, req["txn_id"], "rejected",
+                                     decided_by="app owner")
                 except (FileNotFoundError, ValueError) as e:
                     st.error(str(e))
                 st.rerun()
 
-    _decided_dir = _appr_dir / "decided"
-    _decided = sorted(_decided_dir.glob("*.json"),
-                      reverse=True) if _decided_dir.exists() else []
+    _approval_rows(_session_dir() / "approvals", "")
+
+    # Bridge to the scheduled loop: if a local runner.py wrote approvals
+    # into ./state, surface them here too (labeled). On the hosted demo
+    # ./state doesn't exist, so sessions stay isolated.
+    _local_appr = HERE / "state" / "approvals"
+    if pending_requests(_local_appr):
+        _approval_rows(_local_appr, "From your local runner")
+
+    _decided = decided_requests(_session_dir() / "approvals")
     if _decided:
         st.subheader("Decided")
-        _rows = []
-        for p in _decided[:20]:
-            r = _json.loads(p.read_text())  # parsed once per row
-            _rows.append({"Vendor": r["vendor_name"], "Amount": r["amount"],
-                          "Decision": r["status"], "By": r["decided_by"]})
-        _dataframe(_rows)
+        _dataframe([{"Vendor": r["vendor_name"], "Amount": r["amount"],
+                     "Decision": r["status"], "By": r["decided_by"]}
+                    for r in _decided])
 
 # ---------------------------------------------------------------------------
 # Settings — the customizable layer, no code. Session-scoped.
@@ -568,3 +622,27 @@ with tab_settings:
         save_config(cfg, _session_config_path())
         st.success("Saved for this session. The next run follows the new "
                    "rules.")
+
+    st.markdown("**Carry your settings** — a refresh starts a new session, "
+                "so export the config to keep it (one file per client).")
+    _cfg_text = Path(_session_config_path()).read_text(encoding="utf-8")
+    st.download_button("Export config (YAML)", _cfg_text,
+                       file_name="business_config.yaml", key="cfg_export")
+    _cfg_up = st.file_uploader("Import config", type=["yaml", "yml"],
+                               key="cfg_import")
+    if _cfg_up is not None and st.button("Import", key="cfg_import_btn"):
+        import yaml
+        try:
+            _incoming = yaml.safe_load(_cfg_up.read()) or {}
+            _known = {"business_name", "approval_threshold",
+                      "category_thresholds", "auto_pay_vendors",
+                      "always_review_vendors", "roles", "digest_cadence",
+                      "digest_min_leakage"}
+            _clean = {k: v for k, v in _incoming.items() if k in _known}
+            _merged = load_config(_session_config_path())
+            _merged.update(_clean)
+            save_config(_merged, _session_config_path())
+            st.success(f"Imported {_cfg_up.name} — settings applied.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Couldn't import that file: {e}")
