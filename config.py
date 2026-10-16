@@ -34,6 +34,17 @@ _defaults = {
     # Internal money movement excluded from the spending pie chart —
     # transfers are not spending.
     "transfer_categories": ["Bank Transfer"],
+    # What the business IS — the classifier judges every vendor against
+    # this. Same merchant, different verdict per business.
+    "business_profile": {"industry": "", "description": ""},
+    # Learned vendor lists, populated by the confirmation pass
+    # (CONFIRM = business, DISMISS as personal = personal). These
+    # outrank heuristics on the next audit of the same client.
+    "confirmed_business_vendors": [],
+    "confirmed_personal_vendors": [],
+    # Max Anthropic calls per classify run (vendors are batched,
+    # ~12 per call, so 10 covers ~120 ambiguous vendors).
+    "classification_llm_budget": 10,
 }
 
 
@@ -101,6 +112,24 @@ def validate_config(cfg: dict) -> dict:
         if not isinstance(vals, list):
             raise ValueError(f"{key} must be a list")
         out[key] = [_plain_str(v, key) for v in vals]
+    prof = cfg.get("business_profile") or {}
+    if not isinstance(prof, dict):
+        raise ValueError("business_profile must be a mapping")
+    out["business_profile"] = {
+        "industry": _plain_str(prof.get("industry", ""), "industry"),
+        "description": _plain_str(prof.get("description", ""), "description",
+                                  limit=500),
+    }
+    for key in ("confirmed_business_vendors", "confirmed_personal_vendors"):
+        vals = cfg.get(key) or []
+        if not isinstance(vals, list):
+            raise ValueError(f"{key} must be a list")
+        out[key] = [_plain_str(v, key) for v in vals]
+    budget = cfg.get("classification_llm_budget", 10)
+    if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:
+        raise ValueError("classification_llm_budget must be a "
+                         "non-negative integer")
+    out["classification_llm_budget"] = budget
     return out
 
 

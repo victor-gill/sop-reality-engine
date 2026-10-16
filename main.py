@@ -17,6 +17,7 @@ otherwise the rules-based parser handles labeled-format SOPs.
 
 import argparse
 import json
+import os
 
 import pandas as pd
 
@@ -48,6 +49,8 @@ def main():
                     help="Optional path to write findings as JSON")
     ap.add_argument("--config", default=None,
                     help="business_config.yaml to use (default: the repo's)")
+    ap.add_argument("--no-classify", action="store_true",
+                    help="Skip business-vs-personal expense classification")
     ap.add_argument("--report", default=None,
                     help="Optional path to write an editable client report "
                          "(Markdown, findings pre-filled, judgment left blank)")
@@ -85,6 +88,13 @@ def main():
     from task_queue import generate_tasks as _gen_tasks
     from config import load_config as _load_config
 
+    cfg = _load_config(args.config)
+    if not args.no_classify:
+        from expense_classifier import classify_expenses
+        events = classify_expenses(events, cfg,
+                                   allow_llm=bool(os.environ.get(
+                                       "ANTHROPIC_API_KEY")))
+
     analysis = analyze(steps, events, payroll=payroll, pnl=pnl)
     print_report(analysis, sop_less=sop_less)
 
@@ -96,7 +106,6 @@ def main():
     if args.report:
         from client_report import build_report, count_edits, to_docx
         from pathlib import Path as _Path
-        cfg = _load_config(args.config)
         tasks = _gen_tasks(analysis, steps)
         _out = _Path(args.report)
         _chart = str(_out.with_name(_out.stem + "_spending.png"))

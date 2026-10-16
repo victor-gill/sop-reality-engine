@@ -128,6 +128,13 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 - **SOP-less mode** ✅ — most SMBs have no written SOPs, so `--bank` alone
   infers the actual process from transaction history. Strongest wedge for
   the free-audit offer.
+- **Expense classifier** ✅ — `expense_classifier.py` judges every transaction
+  as business / personal / transfer / needs_review against the client's
+  business profile (industry + description in the config). Deterministic
+  rules first (transfers, payroll, learned vendors), heuristics second,
+  batched LLM review for the ambiguous remainder — each verdict carries
+  a confidence tier, and the confirmation pass feeds the learned lists so
+  the review queue shrinks every engagement.
 - **Phase 5** ✅ — multi-document audits: `--payroll` (payroll
   reconciliation — records without payments, payments without records),
   `--pnl` (books-vs-bank variance by account and period), and

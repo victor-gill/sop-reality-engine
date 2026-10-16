@@ -188,6 +188,16 @@ def analyze(steps: list[dict], events: pd.DataFrame,
                  "transactions": int(r["count"])}
         for c, r in cat.iterrows()
     }
+    # Business-vs-personal split, when the classifier has run. Empty
+    # dict when events were never classified — the report skips it.
+    expense_breakdown = {}
+    if "expense_class" in events.columns:
+        grp = events.groupby("expense_class")["amount"].agg(["sum", "size"])
+        expense_breakdown = {
+            str(cls): {"total": round(float(r["sum"]), 2),
+                       "transactions": int(r["size"])}
+            for cls, r in grp.iterrows()
+        }
     return {
         "unmapped_leakage": leakage,
         "sop_deviations": find_sop_deviations(steps, events),
@@ -208,6 +218,7 @@ def analyze(steps: list[dict], events: pd.DataFrame,
             "payroll_provided": payroll is not None and not payroll.empty,
             "pnl_provided": pnl is not None and not pnl.empty,
             "spending_by_category": spending_by_category,
+            "expense_breakdown": expense_breakdown,
             "period_start": events["timestamp"].min().date().isoformat()
             if len(events) else None,
             "period_end": events["timestamp"].max().date().isoformat()

@@ -26,6 +26,24 @@ auto_pay_vendors:
 always_review_vendors:
   - "Acme Industrial Supply"
 
+# --- Business profile -------------------------------------------------------
+# What the business IS. The expense classifier judges every vendor
+# against this: fuel is business for a fleet, personal for a consultant.
+# Fill these in per client — classification without context is guessing.
+business_profile:
+  industry: "logistics"
+  description: "Regional freight carrier (demo)"
+
+# Learned vendor lists — populated by the confirmation pass
+# (CONFIRM = business, DISMISS-as-personal = personal). These outrank
+# heuristics on the next audit of the same client, so the review queue
+# shrinks every engagement.
+confirmed_business_vendors: []
+confirmed_personal_vendors: []
+
+# Max LLM classification calls per run (vendors are batched ~12/call).
+classification_llm_budget: 10
+
 # --- Team -------------------------------------------------------------------
 # Role -> the person who owns it. Tasks route to roles; the app shows
 # names. Leave a name empty to keep the generic role label.

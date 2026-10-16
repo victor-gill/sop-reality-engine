@@ -162,6 +162,18 @@ def run_pipeline(sop_path, csv_path, payroll_path=None, pnl_path=None,
         frames.append(normalize_logistics(logistics_path))
     events = pd.concat(frames, ignore_index=True).sort_values("timestamp")
     pnl = normalize_pnl(pnl_path) if pnl_path else pd.DataFrame()
+    # Business-vs-personal classification. Shares the process-wide LLM
+    # budget with SOP parsing; deterministic + heuristic layers always
+    # run, the LLM only reviews the ambiguous remainder.
+    import expense_classifier
+    from expense_classifier import classify_expenses
+    with budget["lock"]:
+        clf_allow = budget["used"] < MAX_LLM_PARSES_GLOBAL
+    _cfg = load_config(_session_config_path())
+    events = classify_expenses(events, _cfg, allow_llm=clf_allow)
+    if expense_classifier.last_llm_calls:
+        with budget["lock"]:
+            budget["used"] += expense_classifier.last_llm_calls
     analysis = analyze(steps, events, payroll=payroll, pnl=pnl)
     if dismissed:
         analysis["unmapped_leakage"] = [
